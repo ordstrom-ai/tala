@@ -105,7 +105,7 @@ class PlanTests(LibTestCase):
                     },
                     'plan_content': {
                         'data': [{
-                            'id': 'tala.model.plan_item.Findout:mockup_ontology:WHQ:X.price(X):False',
+                            'id': 'tala.model.plan_item.Findout:mockup_domain:mockup_ontology:WHQ:X.price(X):False',
                             'type': 'tala.model.plan_item.Findout'
                         }]
                     }
@@ -197,7 +197,7 @@ class PlanTests(LibTestCase):
                     'domain_name': 'mockup_domain',
                     'type_': 'findout'
                 },
-                'id': 'tala.model.plan_item.Findout:mockup_ontology:WHQ:X.price(X):False',
+                'id': 'tala.model.plan_item.Findout:mockup_domain:mockup_ontology:WHQ:X.price(X):False',
                 'relationships': {
                     'question': {
                         'data': {
@@ -248,10 +248,10 @@ class PlanTests(LibTestCase):
                     },
                     'plan_content': {
                         'data': [{
-                            'id': 'tala.model.plan_item.Findout:mockup_ontology:WHQ:X.price(X):False',
+                            'id': 'tala.model.plan_item.Findout:mockup_domain:mockup_ontology:WHQ:X.price(X):False',
                             'type': 'tala.model.plan_item.Findout'
                         }, {
-                            'id': 'tala.model.plan_item.Raise:mockup_ontology:WHQ:X.dest_city(X):False',
+                            'id': 'tala.model.plan_item.Raise:mockup_domain:mockup_ontology:WHQ:X.dest_city(X):False',
                             'type': 'tala.model.plan_item.Raise'
                         }]
                     }
@@ -392,7 +392,7 @@ class PlanTests(LibTestCase):
                     'domain_name': 'mockup_domain',
                     'type_': 'findout'
                 },
-                'id': 'tala.model.plan_item.Findout:mockup_ontology:WHQ:X.price(X):False',
+                'id': 'tala.model.plan_item.Findout:mockup_domain:mockup_ontology:WHQ:X.price(X):False',
                 'relationships': {
                     'question': {
                         'data': {
@@ -419,7 +419,7 @@ class PlanTests(LibTestCase):
                     'domain_name': 'mockup_domain',
                     'type_': 'raise'
                 },
-                'id': 'tala.model.plan_item.Raise:mockup_ontology:WHQ:X.dest_city(X):False',
+                'id': 'tala.model.plan_item.Raise:mockup_domain:mockup_ontology:WHQ:X.dest_city(X):False',
                 'relationships': {
                     'question': {
                         'data': {
