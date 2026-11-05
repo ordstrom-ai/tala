@@ -3,7 +3,19 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+
+## [31.1.3] - 2026-11-05
+- Serialization: preserve domain context in `Findout` and `Raise` resource IDs
+  so plans asking the same domain-independent question do not overwrite each
+  other during JSON:API round-trips. This prevents incorrect domain restoration
+  and the resulting `KeyError: 'CoverDomain'` in affected surgical dialogues.
+  The question's own identity and domain-independent semantics are unchanged.
+- Compatibility: existing resource IDs remain readable. Previously corrupted
+  session state cannot be repaired automatically; affected sessions should be
+  restarted after consumers upgrade to this version.
 - Packaging: advertise and test Python 3.12 as the supported platform version.
+
+## [31.1.2] - 2026-10-30
 - Documentation: clarify Tala’s role, capabilities, installation, and service
   prerequisites; add a Requestor client guide and update repository metadata.
 

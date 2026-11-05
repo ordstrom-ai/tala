@@ -1199,9 +1199,10 @@ class QuestionRaisingPlanItem(PlanItemWithSemanticContent):
 
     @property
     def json_api_id(self):
+        id_ = f"{self.json_api_type}:{self.domain_name}:{self.content.json_api_id}:{self.allow_answer_from_pcom}"
         if self.alts_predicate is None:
-            return f"{self.json_api_type}:{self.content.json_api_id}:{self.allow_answer_from_pcom}"
-        return f"{self.json_api_type}:{self.content.json_api_id}:{self.allow_answer_from_pcom}:{self.alts_predicate}"
+            return id_
+        return f"{id_}:{self.alts_predicate}"
 
     @property
     def json_api_attributes(self):
