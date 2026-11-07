@@ -174,3 +174,96 @@ The interaction test executor returns a result dictionary with:
 ## Streaming
 If the executor runs with streaming enabled, the system utterance can be
 populated from the stream listener instead of the HTTP response.
+
+## Incremental progress
+
+Pass an optional `on_event` callback to observe an interaction while it runs:
+
+```python
+from tala.testing.interaction.interaction_test_executor import InteractionTestExecutorNoAssert
+
+
+def show_progress(event):
+    if event["event"] == "transcript_delta":
+        print(event["data"]["text"], end="", flush=True)
+
+
+executor = InteractionTestExecutorNoAssert()
+executor.run_ng_interaction_test(testcase, offer=offer, on_event=show_progress)
+result = executor.result
+```
+
+Direct callers can use `InteractionTester(port=None, on_event=show_progress)`
+and continue calling `run_testcase(testcase, offer)` as before. `on_event` is
+appended to both APIs; existing positional calls and return values are unchanged.
+Progress works independently of `use_streaming`. It does not forward individual
+speech tokens or provide an HTTP streaming endpoint by itself.
+
+### Callback contract
+
+Events are dictionaries with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | `1` for this contract |
+| `event` | Event name from the table below |
+| `execution_id` | New UUID for each `run_testcase` invocation |
+| `testcase_id` | Independent UUID identifying this testcase within that invocation |
+| `name` | Scripted testcase name |
+| `session_id` | Existing dialogue session identifier; may be reused across repetitions |
+| `attempt_index` | One-based repetition index, or `None` at test-level boundaries |
+| `attempt_count` | Maximum planned repetitions; early stopping can execute fewer |
+| `entry_index` | Zero-based scripted interaction index, or `None` outside an entry |
+| `speaker` | `user`, `system`, or `None` outside an entry |
+| `sequence` | One-based increasing sequence, reset for each invocation |
+| `timestamp` | Unix timestamp in seconds |
+| `data` | Event-specific payload |
+
+| Event | Payload |
+| --- | --- |
+| `test_started` | `entry_count` (`None` for an iterable without a known length) |
+| `attempt_started` | Empty payload |
+| `entry_started` | Empty payload; entry index and speaker are in the envelope |
+| `request_started` | `request_type` |
+| `request_completed` | `request_type`, `success`, `elapsed_seconds`, and `error_type` on an exception |
+| `system_output` | Available `moves`, `utterance`, and `expected_passivity`, before assertions |
+| `transcript_delta` | Newly available `text`, including its newline |
+| `entry_completed` | `success`, `status`, `elapsed_seconds`, and safe failure diagnostics when applicable |
+| `attempt_completed` | `status`, `result`, `raised`, and `error_type` when applicable |
+| `test_completed` | `status`, aggregate `result`, `raised`, and `error_type` when applicable |
+
+Request types are `start_session`, `semantic_input`, `speech_input`, `passivity`,
+`service_query`, `service_validation`, `service_action`, `query_results`,
+`validation_results`, and `action_results`. Request success means the observed
+operation returned without raising, not that the interaction assertion passed.
+
+Completion status is `passed`, `failed` for a failed expectation, or `error` for
+an execution exception. `raised=True` means the exception will propagate to the
+caller, preserving legacy behavior. Exceptions already handled by the tester
+still return the existing failure result and have `raised=False`.
+
+Every repetition has its own attempt events. Only `test_completed` reports the
+aggregate outcome, including missing required outcomes. Concatenating transcript
+deltas reconstructs the event-visible aggregate transcript, including separators
+between repetitions. The legacy repeat result's timing fields still describe the
+last executed repetition; attempt events expose each repetition's timings.
+
+Callbacks run synchronously on the test's executing thread. Keep them short
+(for example, enqueue events for a transport worker). Ordinary callback
+exceptions are logged using only their type and do not fail the test; subsequent
+events are still attempted. A callback receives a deep copy and cannot mutate
+the tester's response through it. Callback delivery time is excluded from test,
+turn, entry, and request durations. A failed observer can miss events; this is
+not a durable delivery or replay mechanism. Use separate tester instances for
+concurrent executions.
+
+### Diagnostics and compatibility
+
+The existing returned result and buffered transcript are unchanged. Completion
+event results contain the existing standard result fields, but use the
+event-visible transcript and sanitized failure diagnostics. Raw session/context
+objects, offers, service parameters, request URLs, backend response dumps, and
+exception messages/tracebacks are not copied into progress events. Missing-output
+errors also omit raw response dumps. Speech, semantic moves, and scripted
+expectations remain visible and can contain application data; consumers must
+apply their own access controls and retention policy.
