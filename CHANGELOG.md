@@ -3,6 +3,10 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Interaction testing: add optional, structured progress callbacks for test,
+  repetition, entry, request, transcript, and system-output events. Existing
+  result dictionaries, transcripts, and exception behavior are preserved;
+  callback diagnostics omit raw backend payloads and exception details.
 
 ## [31.1.3] - 2026-11-05
 - Serialization: preserve domain context in `Findout` and `Raise` resource IDs

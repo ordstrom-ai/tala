@@ -16,6 +16,7 @@ from tala.model.user_move import UserMove, DDDSpecificUserMove
 from tala.utils.tdm_client import TDMClient
 
 from tala.testing.interaction.comparison import StringComparison, MoveComparison
+from tala.testing.interaction.progress import InteractionTestProgress
 from tala.testing.interaction.stream_listener import StreamListener
 
 from tala.utils.func import configure_stdout_logging, getenv
@@ -113,18 +114,20 @@ class OutputBuffer:
 
 
 class InteractionTester:
-    def __init__(self, port, device_id=DEFAULT_DEVICE_ID, use_streaming=False):
+    def __init__(self, port, device_id=DEFAULT_DEVICE_ID, use_streaming=False, on_event=None):
         self._session_id = f"interaction-tester-session-{str(uuid.uuid4())}"
         self._device_id = device_id
         self._port = port
         self._use_streaming = use_streaming
+        self._progress = InteractionTestProgress(on_event)
 
     def start_session(self, offer=None):
         self._initialize_session_object()
         if offer:
             self._session_data.update(offer)
         self._session_data["neural"] = self._neural
-        self._latest_response = self._client.start_session(self._session_data)
+        with self._progress.request("start_session"):
+            self._latest_response = self._client.start_session(self._session_data)
         logger.info("starting session", session_id=self._session_id)
         self._session_data = self._latest_response[SESSION]
 
@@ -133,11 +136,29 @@ class InteractionTester:
 
     def run_testcase(self, case, offer=None):
         repeat, required_outcomes = self._get_repeat_and_required_outcomes(case)
-        if repeat == 1 and not required_outcomes:
-            return self._run_testcase_once(case, offer)
-        return self._run_testcase_with_repeats(case, offer, repeat, required_outcomes)
+        self._progress.start_test(case, self._session_id, repeat)
+        try:
+            if repeat == 1 and not required_outcomes:
+                response = self._run_testcase_once(case, offer)
+            else:
+                response = self._run_testcase_with_repeats(case, offer, repeat, required_outcomes)
+        except BaseException as error:
+            self._progress.complete_test(error=error)
+            raise
+        self._progress.complete_test(response)
+        return response
 
     def _run_testcase_once(self, case, offer=None, run_index=None, run_count=None):
+        self._progress.start_attempt(run_index if run_index is not None else 1)
+        try:
+            response = self._execute_testcase_once(case, offer, run_index, run_count)
+        except BaseException as error:
+            self._progress.complete_attempt(error=error)
+            raise
+        self._progress.complete_attempt(response)
+        return response
+
+    def _execute_testcase_once(self, case, offer=None, run_index=None, run_count=None):
         self._initialize_testcase(case, run_index=run_index, run_count=run_count)
         self._start_clock()
         self.start_session(offer)
@@ -146,27 +167,41 @@ class InteractionTester:
         try:
             for entry_index, entry in enumerate(case["interaction"]):
                 self._current_entry_index = entry_index
-                if entry[SPEAKER] == USER:
-                    success = self._do_user_turn(entry)
-                elif entry[SPEAKER] == SYSTEM:
-                    success = self._do_system_turn(entry)
+                success = self._run_entry(entry, success)
                 if not success:
                     self._stop_clock()
                     return self._create_response(self._result)
                 self._previous_entry_type = entry[SPEAKER]
         except InteractionTesterException as e:
+            self._progress.record_error(e)
             self._buffer_output('!!!! Exception raised during test !!!!')
-            self._buffer_output(f"Exception: {e}")
+            self._buffer_output(f"Exception: {e}", progress_output=f"Exception: {type(e).__name__}")
             self._result = {"success": False, "failure_description": str(e)}
         except Exception as e:
+            self._progress.record_error(e)
             self._buffer_output('!!!! General exception raised during test !!!!')
-            self._buffer_output(f"Exception: {e}")
+            self._buffer_output(f"Exception: {e}", progress_output=f"Exception: {type(e).__name__}")
             self._result = {"success": False, "failure_description": str(e)}
         else:
             self._buffer_output('=== End interaction test ===')
             self._result = {"success": True}
         self._stop_clock()
         return self._create_response(self._result)
+
+    def _run_entry(self, entry, success):
+        self._progress.start_entry(self._current_entry_index, entry[SPEAKER])
+        started = time.perf_counter()
+        callback_seconds = self._progress.callback_seconds
+        try:
+            if entry[SPEAKER] == USER:
+                success = self._do_user_turn(entry)
+            elif entry[SPEAKER] == SYSTEM:
+                success = self._do_system_turn(entry)
+        except BaseException as error:
+            self._progress.complete_entry(False, self._progress.elapsed_since(started, callback_seconds), error)
+            raise
+        self._progress.complete_entry(success, self._progress.elapsed_since(started, callback_seconds))
+        return success
 
     def _initialize_testcase(self, testcase, run_index=None, run_count=None):
         self._output_buffer = OutputBuffer()
@@ -196,6 +231,7 @@ class InteractionTester:
 
     def _start_clock(self):
         self._start_time = time.time()
+        self._clock_callback_seconds = self._progress.callback_seconds
         self._turn_times = []
 
     def _patch_url_with_port(self, url):
@@ -204,9 +240,10 @@ class InteractionTester:
             return new_url
         return url
 
-    def _buffer_output(self, output):
+    def _buffer_output(self, output, progress_output=None):
         logger.info("interaction test output", output=output)
         self._output_buffer.add(output)
+        self._progress.transcript(output if progress_output is None else progress_output)
 
     def _print_buffer(self):
         print(str(self._output_buffer))
@@ -239,6 +276,7 @@ class InteractionTester:
         self.check_for_consecutive_speaker(USER)
 
         start_time = time.time()
+        callback_seconds = self._progress.callback_seconds
 
         if MOVE_CONTENT in user_entry:
             moves = user_entry[MOVE_CONTENT]
@@ -266,19 +304,22 @@ class InteractionTester:
         else:
             raise InteractionTesterException("Nothing to do in user entry:", user_entry)
         end_time = time.time()
-        self._turn_times.append(end_time - start_time)
+        self._turn_times.append(end_time - start_time - (self._progress.callback_seconds - callback_seconds))
         return True
 
     def _request_semantic_input(self, interpretations, entities=None):
-        self._start_stream_listener()
-        self._request_times.append(time.time())
-        try:
-            self._latest_response = self._client.request_semantic_input(interpretations, self._session_data, entities)
-        except Exception as e:
-            raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
-        logger.info("semantic_input response", response=_redact_interaction_log_payload(self._latest_response))
-        self._add_streamed_output()
-        self._update_session_data()
+        with self._progress.request("semantic_input"):
+            self._start_stream_listener()
+            self._request_times.append(time.time())
+            try:
+                self._latest_response = self._client.request_semantic_input(
+                    interpretations, self._session_data, entities
+                )
+            except Exception as e:
+                raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
+            logger.info("semantic_input response", response=_redact_interaction_log_payload(self._latest_response))
+            self._add_streamed_output()
+            self._update_session_data()
 
     def _add_streamed_output(self):
         if self._use_streaming and OUTPUT:
@@ -291,27 +332,29 @@ class InteractionTester:
                 warnings.warn(f"latest response has no '{OUTPUT}' field: {e}")
 
     def _request_passivity(self):
-        self._start_stream_listener()
-        self._request_times.append(time.time())
-        try:
-            self._latest_response = self._client.request_passivity(self._session_data)
-        except Exception as e:
-            raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
-        logger.info("passivity response", response=_redact_interaction_log_payload(self._latest_response))
-        self._add_streamed_output()
-        self._update_session_data()
+        with self._progress.request("passivity"):
+            self._start_stream_listener()
+            self._request_times.append(time.time())
+            try:
+                self._latest_response = self._client.request_passivity(self._session_data)
+            except Exception as e:
+                raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
+            logger.info("passivity response", response=_redact_interaction_log_payload(self._latest_response))
+            self._add_streamed_output()
+            self._update_session_data()
 
     def _request_speech_input(self, utterance):
         hypotheses = [InputHypothesis(utterance, 1.0)]
-        self._start_stream_listener()
-        self._request_times.append(time.time())
-        try:
-            self._latest_response = self._client.request_speech_input(hypotheses, self._session_data)
-        except Exception as e:
-            raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
-        logger.info("speech_input response", response=_redact_interaction_log_payload(self._latest_response))
-        self._add_streamed_output()
-        self._update_session_data()
+        with self._progress.request("speech_input"):
+            self._start_stream_listener()
+            self._request_times.append(time.time())
+            try:
+                self._latest_response = self._client.request_speech_input(hypotheses, self._session_data)
+            except Exception as e:
+                raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
+            logger.info("speech_input response", response=_redact_interaction_log_payload(self._latest_response))
+            self._add_streamed_output()
+            self._update_session_data()
 
     def _update_session_data(self):
         try:
@@ -346,6 +389,7 @@ class InteractionTester:
             self._make_service_request_and_create_tdm_request_with_service_invocation_result()
         else:
 
+            self._progress.system_output(self._latest_response)
             if self._latest_response == NO_VOICE_ACTIVATION:
                 return self._create_no_voice_activation_response()
 
@@ -423,7 +467,8 @@ class InteractionTester:
             "session": self._latest_response["session"]
         }
         request["request"][type_] = results
-        self._latest_response = self._client.make_request(request)
+        with self._progress.request(type_):
+            self._latest_response = self._client.make_request(request)
         logger.info("results request response", response=_redact_interaction_log_payload(self._latest_response))
 
     def _make_query_to_http_service(self, name, url, parameters, min_results, max_results, session):
@@ -438,19 +483,20 @@ class InteractionTester:
             }
         }
         logger.info("making query request to http service", url=url, data=data)
-        response = requests.post(
-            url,
-            data=json.dumps(data),
-            headers={"Content-type": "application/json"},
-            timeout=self._request_timeout_seconds(),
-        )
-        try:
-            response_dict = json.loads(response.text)
-        except BaseException:
-            logger.exception("Exception when loading response from service")
-            raise QueryException(
-                f"Response to service request is not JSON: request_data='{data}', response='{response.text}'"
+        with self._progress.request("service_query"):
+            response = requests.post(
+                url,
+                data=json.dumps(data),
+                headers={"Content-type": "application/json"},
+                timeout=self._request_timeout_seconds(),
             )
+            try:
+                response_dict = json.loads(response.text)
+            except BaseException:
+                logger.exception("Exception when loading response from service")
+                raise QueryException(
+                    f"Response to service request is not JSON: request_data='{data}', response='{response.text}'"
+                )
         logger.info("query response from http service:", response_dict)
         return response_dict
 
@@ -482,13 +528,14 @@ class InteractionTester:
                 "parameters": parameters,
             }
         }
-        response = requests.post(
-            url,
-            data=json.dumps(data),
-            headers={"Content-type": "application/json"},
-            timeout=self._request_timeout_seconds(),
-        )
-        response_dict = json.loads(response.text)
+        with self._progress.request("service_validation"):
+            response = requests.post(
+                url,
+                data=json.dumps(data),
+                headers={"Content-type": "application/json"},
+                timeout=self._request_timeout_seconds(),
+            )
+            response_dict = json.loads(response.text)
         return response_dict
 
     def _make_service_request_and_create_tdm_request_with_service_action_invocation_result(self):
@@ -519,13 +566,14 @@ class InteractionTester:
                 "parameters": parameters,
             }
         }
-        response = requests.post(
-            url,
-            data=json.dumps(data),
-            headers={"Content-type": "application/json"},
-            timeout=self._request_timeout_seconds(),
-        )
-        response_dict = json.loads(response.text)
+        with self._progress.request("service_action"):
+            response = requests.post(
+                url,
+                data=json.dumps(data),
+                headers={"Content-type": "application/json"},
+                timeout=self._request_timeout_seconds(),
+            )
+            response_dict = json.loads(response.text)
         return response_dict
 
     def _request_timeout_seconds(self):
@@ -549,6 +597,7 @@ class InteractionTester:
             "success": False,
             "failure_description": "Backend requires voice activation to process content."
         }
+        self._progress.fail(self._result["failure_description"])
         self._buffer_output("S> <Backend requires voice activation to process content>")
         return False
 
@@ -572,6 +621,7 @@ class InteractionTester:
                 "failure_description": f"Expected expected_passivity={expected_passivity_value}, " +
                 f"but actual expected_passivity was {actual_value}."
             }
+        self._progress.fail(self._result["failure_description"])
 
     def _assert_system_moves_are_matched_by(self, expected_move_content):
         assert OUTPUT in self._latest_response, f"No {OUTPUT} in {self._latest_response}"
@@ -581,7 +631,8 @@ class InteractionTester:
                 "success": False,
                 "failure_description": f"No moves in output: {self._latest_response[OUTPUT]}"
             }
-            self._buffer_output(self._result["failure_description"])
+            self._progress.fail("No moves in output.")
+            self._buffer_output(self._result["failure_description"], progress_output="No moves in output.")
             return False
         self._record_system_moves_seen(actual_move_content)
         try:
@@ -602,12 +653,14 @@ class InteractionTester:
                     f"but got:  {json.dumps(actual_move_content)}"
                 )
                 self._result = {"success": False, "failure_description": mismatch_description}
+                self._progress.fail(mismatch_description)
                 self._buffer_output(mismatch_description)
                 return False
         else:
             comparison = MoveComparison(actual_move_content, expected_move_content)
             if not comparison.match():
                 self._result = {"success": False, "failure_description": comparison.mismatch_description()}
+                self._progress.fail(self._result["failure_description"])
                 self._buffer_output(comparison.mismatch_description())
                 return False
         if self._turn_times:
@@ -624,12 +677,14 @@ class InteractionTester:
                 "success": False,
                 "failure_description": f"No utterance in output: {self._latest_response[OUTPUT]}"
             }
-            self._buffer_output(self._result["failure_description"])
+            self._progress.fail("No utterance in output.")
+            self._buffer_output(self._result["failure_description"], progress_output="No utterance in output.")
             return False
 
         comparison = StringComparison(actual_utterance_content, expected_speech_content)
         if not comparison.match():
             self._result = {"success": False, "failure_description": comparison.mismatch_description()}
+            self._progress.fail(self._result["failure_description"])
             self._buffer_output(comparison.mismatch_description())
             return False
         if self._turn_times:
@@ -795,6 +850,7 @@ class InteractionTester:
             if not outcomes_seen[index]
         ]
         failure_description = (f"Required outcomes not observed after {runs_executed} run(s): {json.dumps(missing)}")
+        self._progress.fail(failure_description)
         return {
             "success": False,
             "failure_description": failure_description,
@@ -808,4 +864,4 @@ class InteractionTester:
         return "\n".join(transcripts)
 
     def _stop_clock(self):
-        self._end_time = time.time()
+        self._end_time = time.time() - (self._progress.callback_seconds - self._clock_callback_seconds)
