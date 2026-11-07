@@ -3,6 +3,8 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+
+## [31.2.0] - 2026-11-07
 - Interaction testing: add optional, structured progress callbacks for test,
   repetition, entry, request, transcript, and system-output events. Existing
   result dictionaries, transcripts, and exception behavior are preserved;
