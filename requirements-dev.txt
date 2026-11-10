@@ -1,6 +1,6 @@
 build==1.6.1
 jsonschema==4.26.0
 pytest==9.2.0
-flake8==7.4.1
+flake8==7.5.0
 yapf==0.43.0
 pylint==4.1.3

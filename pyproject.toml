@@ -17,13 +17,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12"
 ]
 dependencies = [
-    "azure-data-tables==12.5.0",
+    "azure-data-tables==12.7.0",
     "azure-identity>=1.16.0",
     "azure-monitor-ingestion>=1.0.0",
     "iso8601>=0.1.14",
     "Jinja2>=3.0.1, <4",
     "lxml>=4.6.3",
-    "paho-mqtt==2.1.0",
+    "paho-mqtt==2.2.0",
     "prompt-toolkit>=3.0.19",
     "requests>=2.26.0",
     "structlog>=21.1.0",

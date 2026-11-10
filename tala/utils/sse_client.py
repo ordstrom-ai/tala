@@ -310,6 +310,14 @@ class ChunkJoiner:
 class SSEClient(AbstractSSEClient):
     sessions = {}
 
+    def set_persona(self, session_id, persona):
+        if persona:
+            super().set_persona(session_id, persona)
+
+    def set_voice(self, session_id, voice):
+        if voice:
+            super().set_voice(session_id, voice)
+
     def open_session(self, session_id, s_and_r_dict=None, logger=None):
         super().open_session(session_id, s_and_r_dict, logger)
         streamer_session = self.sessions[session_id]
