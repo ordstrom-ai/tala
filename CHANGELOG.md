@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- SSE streaming: skip empty or missing persona and voice settings instead of
+  resetting the frontend defaults. Nonempty settings, content, completion events,
+  and MQTT behavior are unchanged.
 
 ## [31.2.0] - 2026-11-07
 - Interaction testing: add optional, structured progress callbacks for test,
