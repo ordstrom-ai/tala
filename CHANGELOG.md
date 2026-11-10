@@ -3,9 +3,16 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+
+## [31.2.1] - 2026-11-10
 - SSE streaming: skip empty or missing persona and voice settings instead of
   resetting the frontend defaults. Nonempty settings, content, completion events,
   and MQTT behavior are unchanged.
+- Dependencies: update Azure Data Tables to 12.7.0 and Paho MQTT to 2.2.0.
+
+## [31.2.2] - 2026-11-10
+- Documentation: correct the changelog to record the published Tala 31.2.1
+  release under its version and publication date.
 
 ## [31.2.0] - 2026-11-07
 - Interaction testing: add optional, structured progress callbacks for test,
