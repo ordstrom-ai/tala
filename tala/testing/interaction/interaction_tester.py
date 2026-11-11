@@ -469,6 +469,7 @@ class InteractionTester:
         request["request"][type_] = results
         with self._progress.request(type_):
             self._latest_response = self._client.make_request(request)
+        self._update_session_data()
         logger.info("results request response", response=_redact_interaction_log_payload(self._latest_response))
 
     def _make_query_to_http_service(self, name, url, parameters, min_results, max_results, session):
