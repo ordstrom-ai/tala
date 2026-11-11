@@ -4,6 +4,11 @@ record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
 
+## [32.2.0] - 2026-11-11
+- Interaction testing: refresh session state after query, action, and
+  validation result continuations so subsequent turns use the latest service
+  result.
+
 ## [31.2.1] - 2026-11-10
 - SSE streaming: skip empty or missing persona and voice settings instead of
   resetting the frontend defaults. Nonempty settings, content, completion events,

@@ -80,6 +80,7 @@ for configuration and a complete example.
 - [Source code](https://github.com/ordstrom-ai/tala)
 - [Issue tracker](https://github.com/ordstrom-ai/tala/issues)
 - [Release history](https://github.com/ordstrom-ai/tala/releases)
+- [Release procedure](RELEASING.md) (maintainers)
 
 For bug reports, include the Tala version, relevant platform component
 versions, and a minimal example where possible.
