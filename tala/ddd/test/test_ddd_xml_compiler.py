@@ -2054,6 +2054,16 @@ class TestPlanItemCompilation(DDDXMLCompilerTestCase):
 
         self._then_result_has_plan(Plan([self._parse("forget(means_of_transport(train))")]))
 
+    def test_forget_action_status_proposition(self):
+        self._given_compiled_ontology('<ontology name="Ontology"><action name="turn_on_power"/></ontology>')
+
+        for item_type in ("forget", "forget_shared"):
+            self._when_compile_domain_with_plan(
+                f'<{item_type}><action_status action="turn_on_power" status="done"/></{item_type}>'
+            )
+
+            self._then_result_has_plan(Plan([self._parse(f"{item_type}(action_status(turn_on_power, done))")]))
+
     def test_forget_proposition_ignores_formatting_whitespace_and_comments(self):
         self._given_compiled_ontology(
             """

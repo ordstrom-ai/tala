@@ -62,6 +62,39 @@ def test_compile_domain_emits_allow_binding_yn_answers_flag():
     assert item.question.is_yes_no_question()
 
 
+@pytest.mark.parametrize("item_type", ["forget", "forget_shared"])
+def test_compile_domain_supports_forgetting_an_action_status(item_type):
+    compiler = DDDJSONCompiler()
+    ontology_args = compiler.compile_ontology({
+        "ontology": {
+            "name": "Ontology",
+            "actions": ["turn_on_power"],
+            "predicates": [],
+        }
+    })
+    ontology = Ontology(**ontology_args)
+    parser = Parser("mock_ddd", ontology, "Domain")
+
+    domain = compiler.compile_domain(
+        "Domain",
+        {
+            "domain": {
+                "name": "Domain",
+                "plans": [{
+                    "goal": {"perform": {"action": "turn_on_power"}},
+                    "content": [{
+                        item_type: {"action_status": {"action": "turn_on_power", "status": "done"}}
+                    }],
+                }],
+            }
+        },
+        ontology,
+        parser,
+    )
+
+    assert str(domain["plans"][0]["plan"].top) == f"{item_type}(action_status(turn_on_power, done))"
+
+
 def test_compile_domain_rejects_allow_binding_yn_answers_for_non_yn_question():
     compiler = DDDJSONCompiler()
     ontology_args = compiler.compile_ontology({

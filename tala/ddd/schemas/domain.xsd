@@ -141,8 +141,8 @@
 
   <xs:complexType name="plan">
     <xs:choice minOccurs="0" maxOccurs="unbounded">
-      <xs:element name="forget" type="proposition" minOccurs="0" maxOccurs="unbounded"/>
-      <xs:element name="forget_shared" type="proposition" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="forget" type="forget_proposition" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="forget_shared" type="forget_proposition" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="forget_all" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="log" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="greet" minOccurs="0" maxOccurs="unbounded"/>
@@ -486,6 +486,16 @@
       <xs:element ref="perform"/>
       <xs:element name="resolve" type="has_question"/>
       <xs:element name="proposition" type="predicate_proposition"/>
+    </xs:choice>
+    <xs:attribute name="predicate" type="xs:string"/>
+  </xs:complexType>
+
+  <xs:complexType name="forget_proposition">
+    <xs:choice minOccurs="0" maxOccurs="1">
+      <xs:element ref="perform"/>
+      <xs:element name="resolve" type="has_question"/>
+      <xs:element name="proposition" type="predicate_proposition"/>
+      <xs:element ref="action_status"/>
     </xs:choice>
     <xs:attribute name="predicate" type="xs:string"/>
   </xs:complexType>
