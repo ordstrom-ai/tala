@@ -3,6 +3,7 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- DDD: allow `forget` and `forget_shared` to target `action_status` propositions.
 
 ## [31.2.3] - 2026-11-11
 - Interaction testing: refresh session state after query, action, and

@@ -348,6 +348,9 @@ class DDDJSONCompiler(object):
         if "perform" in payload or "resolve" in payload:
             self._append_goal_proposition(doc, element, payload)
             return
+        if "action_status" in payload:
+            self._append_condition_proposition(doc, element, payload)
+            return
         if "predicate" in payload and "value" not in payload:
             element.setAttribute("predicate", payload["predicate"])
             return
