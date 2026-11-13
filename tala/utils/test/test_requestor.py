@@ -1,3 +1,6 @@
+from threading import Event
+from unittest.mock import Mock
+
 import pytest
 
 from tala.utils import requestor
@@ -436,6 +439,7 @@ class TestMakeRequest(TestRequestorBaseClass):
     def test_update_tpm_request(self):
         self.given_update_tpm_request()
         self.when_request_is_made()
+        self.when_update_tpm_request_finishes()
         self.then_request_call_has_response((
             'BASE-URL-FOR-REQUESTOR/update-tpm', {
                 'deployment_name': 'some-deployment-name',
@@ -446,12 +450,24 @@ class TestMakeRequest(TestRequestorBaseClass):
         ))
 
     def given_update_tpm_request(self):
+        self._update_tpm_completed = Event()
+        completion_logger = Mock()
+
+        def record_completion(event, **_fields):
+            if event == "received response":
+                self._update_tpm_completed.set()
+
+        completion_logger.info.side_effect = record_completion
         self._gpt_request = requestor.UpdateTPMRequest(
             request_id="some-update-id",
             deployment_name="some-deployment-name",
             deployment_resource="some-deployment-resource",
-            total_tokens_used=666
+            total_tokens_used=666,
+            logger=completion_logger,
         )
+
+    def when_update_tpm_request_finishes(self):
+        assert self._update_tpm_completed.wait(timeout=1), "UpdateTPMRequest did not publish its response"
 
 
 class RequestorResponse(TestRequestorBaseClass):
