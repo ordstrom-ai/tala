@@ -1,16 +1,21 @@
-# Tala 31.5.0 release preparation
+# Tala 31.5.0 release record
 
-**Status: proposed; not published.** The runtime changes are in
-[PR #18](https://github.com/ordstrom-ai/tala/pull/18). This preparation PR can be
-reviewed before #18 merges; its notes are not evidence that the code is already
-on `main`. Merge #18 and this preparation before publishing, and reconcile any
-changelog overlap so `Unreleased` is left empty for the next cycle.
+**Status: published on 2026-11-13.** Version 31.5.0 is available on
+[PyPI](https://pypi.org/project/tala/31.5.0/). The publishing workflow succeeded
+for source commit `3273f708a0112e3607b5effb12558344086061a3`:
+[publish run](https://github.com/ordstrom-ai/tala/actions/runs/43452974020).
 
-## Proposed GitHub Release title
+The runtime changes came from [PR #18](https://github.com/ordstrom-ai/tala/pull/18)
+and preparation from [PR #19](https://github.com/ordstrom-ai/tala/pull/19). The
+release body below is the prepared wording, not a claim that it exactly matches
+the published GitHub description. Post-publication repository documentation
+corrections do not change the released tag, source commit, or PyPI artifacts.
+
+## Prepared GitHub Release title
 
 Tala 31.5.0
 
-## Proposed GitHub Release body
+## Prepared GitHub Release body
 
 ### Logging and diagnostic snapshots
 
@@ -53,7 +58,10 @@ Dependency freshness remains required for each PR submission. It is not repeated
 on the resulting `main` commit; application tests, lint, package build, and
 artifact smoke checks still run on both PRs and `main`.
 
-## Finalization checklist
+## Finalization checklist used for preparation
+
+This historical checklist is not an instruction to publish 31.5.0 again. Future
+releases must follow `RELEASING.md` and inspect their own final merged source.
 
 - Merge #18 and this preparation PR in the intended order; reconcile the dated
   changelog with the actual included code and leave a fresh `Unreleased` section.

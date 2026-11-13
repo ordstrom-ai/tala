@@ -17,9 +17,20 @@ from a local machine or create a release as part of ordinary PR work.
 3. Before making a GitHub Release, move the release notes from `Unreleased` to
    a dated `X.Y.Z` changelog heading in a reviewed PR. Leave a fresh, empty
    `Unreleased` section at the top. Merge the PR to `main`.
-4. Wait for the required `tests` Actions check to pass on the resulting `main`
+   Preparation PRs may be opened before their code dependencies merge. Document
+   those dependencies and let the maintainer choose the merge order; do not make
+   PR creation conditional on dependencies already being merged.
+4. **Inspect the final merged source, not just the preparation branch.** Confirm
+   the intended code and notes are both included, every change since the previous
+   release is covered, and the dated section describes the actual release. When
+   the release includes all pending changes, `Unreleased` must be empty. Reconcile
+   duplicated notes or headings introduced by independently prepared PRs. Passing
+   CI and merged PRs do not by themselves prove this documentation is finalized.
+5. Wait for the required `tests` Actions check to pass on the resulting `main`
    commit. Record that exact commit SHA; do not make further commits before
-   creating the release for it.
+   creating the release for it. Dependency freshness is required at submission,
+   not rerun on the resulting `main` commit or during publication. Application,
+   lint, build, and artifact checks remain required.
 
 Tala's package version is derived from Git tags with `setuptools-scm`; do not
 manually change the package version in `pyproject.toml` for a release.
@@ -31,7 +42,8 @@ manually change the package version in `pyproject.toml` for a release.
    `X.Y.Z` (or `vX.Y.Z`) tag at that commit.
 2. Use a clear title such as `Tala X.Y.Z` and add concise release notes based
    on the dated changelog section. Review the tag, target commit, version, and
-   notes before publishing.
+   notes before publishing. Copy only the release body, not preparation status,
+   dependency warnings, `Unreleased` notes, or the internal finalization checklist.
 3. Publish the GitHub Release. Publishing—not saving a draft—triggers the
    PyPI workflow. The `pypi` environment currently has no required-reviewer
    protection, so the workflow can start publishing immediately.
@@ -42,7 +54,19 @@ manually change the package version in `pyproject.toml` for a release.
 5. Verify that the new version appears on PyPI. In a clean Python 3.12
    environment, install `tala==X.Y.Z` and smoke-test importing the package and
    the released feature. Do not replace the shared development environment's
-   dependencies to perform this check.
+   dependencies to perform this check. Check the version-specific PyPI endpoint
+   if its latest-version listing has not refreshed yet.
+
+## Documentation corrections after publication
+
+- Fix duplicate changelog entries or stale preparation status in a normal
+  reviewed commit/PR. A repository documentation-only correction does not require
+  another package release.
+- Keep the published tag, source commit, and PyPI artifacts unchanged. Never
+  retag or replace an existing version to correct repository documentation.
+- Distinguish repository corrections from the historical content already shipped
+  in the package. A runtime/API change requires its own reviewed release decision;
+  do not bundle one into a documentation cleanup.
 
 ## If publishing fails
 
