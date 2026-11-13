@@ -27,6 +27,12 @@ record before 12.0.0, see CHANGELOG.legacy.md.
   overlapping failures cannot restore unusable sessions or replace newer streams.
   Send failures report the failing stream's own output and preserve their cause.
 
+## [31.4.0] - 2026-11-13
+- SSE/MQTT streaming: add `PRONUNCIATION_REPLACEMENTS_ENABLED` to disable
+  text substitutions used to guide TTS pronunciation, along with their
+  word-boundary buffering. The setting defaults to enabled; empty replacement
+  models use ordered pass-through automatically.
+
 ## [31.3.0] - 2026-11-12
 - DDD: allow `forget` and `forget_shared` to target `action_status` propositions.
 
