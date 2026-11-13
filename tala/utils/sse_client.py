@@ -1,10 +1,14 @@
 import json
+from contextlib import suppress
 import threading
 import queue
 import uuid
 
 import websocket
 import requests
+import structlog
+
+from tala.utils.log_context import validated_correlation_context
 
 STREAMING_DONE = "STREAMING_DONE"
 STREAMING_SET_PERSONA = "STREAMING_SET_PERSONA"
@@ -19,6 +23,20 @@ class SSEClientException(BaseException):
 
 class StreamIteratorException(BaseException):
     pass
+
+
+class SSEStreamHandle:
+    """A particular producer stream, independent of the conversation's latest stream."""
+    def __init__(self, streamer_session):
+        self.streamer_session = streamer_session
+
+    @property
+    def stream_id(self):
+        return self.streamer_session["stream_id"]
+
+    @property
+    def session_id(self):
+        return self.streamer_session["session_id"]
 
 
 class AbstractSSEClient:
@@ -52,22 +70,45 @@ class AbstractSSEClient:
         return f'tm/{streamer_session["session_id"]}'
 
     def open_session(self, session_id, s_and_r_dict=None, logger=None):
-        self.logger.debug("sse client open session", session_id=session_id)
-        streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id)
+        self._open_streamer_session(session_id, s_and_r_dict, logger)
 
+    def _open_streamer_session(self, session_id, s_and_r_dict=None, logger=None):
+        streamer_session = self._create_streamer_session(session_id, s_and_r_dict, logger)
+        self.sessions[session_id] = streamer_session
+        streamer_session["streamer_thread"].start()
+        return streamer_session
+
+    def _create_streamer_session(self, session_id, s_and_r_dict=None, logger=None):
+        self.logger.debug("sse client open session", session_id=session_id)
         streamer_session = {
             "session_id": session_id,
             "search_and_replace_dict": s_and_r_dict if s_and_r_dict else {},
             "message_counter": 0,
             "streamed": [],
             "logger": logger,
-            "streamer_thread": streamer_thread,
-            "chunk_joiner": chunk_joiner
+            "stream_id": str(uuid.uuid4()),
+            "correlation": self._correlation_for_logger(logger),
         }
-        self.sessions[session_id] = streamer_session
-        streamer_session["streamer_thread"].start()
+        streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id, streamer_session)
+        streamer_session.update(streamer_thread=streamer_thread, chunk_joiner=chunk_joiner)
+        return streamer_session
 
-    def _apply_dictionary(self, session_id, chunk):
+    @staticmethod
+    def _correlation_for_logger(logger):
+        if logger is None:
+            return {}
+        try:
+            return validated_correlation_context(structlog.get_context(logger))
+        except (AttributeError, TypeError):
+            return {}
+
+    def _streamer_session_for(self, session_id):
+        try:
+            return session_id.streamer_session
+        except AttributeError:
+            return self.sessions[session_id]
+
+    def _apply_dictionary(self, session_id, chunk, streamer_session=None):
         def key_matches_beginning_of_chunk(key, chunk):
             return chunk.startswith(f"{key} ")
 
@@ -81,39 +122,43 @@ class AbstractSSEClient:
         def key_matches_end_of_chunk(key, chunk):
             return chunk.endswith(f" {key}")
 
-        search_and_replace_dict = self.sessions[session_id]["search_and_replace_dict"]
+        streamer_session = self._streamer_session_for(session_id) if streamer_session is None else streamer_session
+        search_and_replace_dict = streamer_session["search_and_replace_dict"]
+        stream_logger = streamer_session.get("logger") or self.logger
 
         if chunk in search_and_replace_dict:
-            self.logger.debug("Matched entire chunk", chunk=chunk)
+            stream_logger.debug("Matched entire chunk", chunk=chunk)
             return search_and_replace_dict[chunk]
         for key in search_and_replace_dict:
             if key_matches_beginning_of_chunk(key, chunk):
-                self.logger.debug("Matched beginning of chunk", key=key, chunk=chunk)
+                stream_logger.debug("Matched beginning of chunk", key=key, chunk=chunk)
                 chunk = chunk.replace(key, search_and_replace_dict[key], 1)
             match = key_matches_middle_of_chunk(key, chunk)
             while match:
-                self.logger.debug("Matched middle of chunk", key=key, chunk=chunk)
+                stream_logger.debug("Matched middle of chunk", key=key, chunk=chunk)
                 chunk = chunk.replace(key, search_and_replace_dict[key], 1)
                 match = key_matches_middle_of_chunk(key, chunk)
             if key_matches_end_of_chunk(key, chunk):
-                self.logger.debug("Matched end of chunk", key=key, chunk=chunk)
+                stream_logger.debug("Matched end of chunk", key=key, chunk=chunk)
                 chunk = chunk.replace(key, search_and_replace_dict[key], 1)
         return chunk
 
-    def _prepare_streamer_thread(self, session_id):
+    def _prepare_streamer_thread(self, session_id, streamer_session=None):
         def stream_chunks():
             self._streaming_exception = None
-            streamer_session = self.sessions[session_id]
-            for chunk in streamer_session["chunk_joiner"]:
+            stream = self._streamer_session_for(session_id) if streamer_session is None else streamer_session
+            for chunk in stream["chunk_joiner"]:
                 try:
-                    chunk = self._apply_dictionary(session_id, chunk)
-                    self._stream_to_frontend(streamer_session, {"event": STREAMING_CHUNK, "data": chunk})
-                    streamer_session["streamed"].append(chunk)
+                    chunk = self._apply_dictionary(session_id, chunk, stream)
+                    self._stream_to_frontend(stream, {"event": STREAMING_CHUNK, "data": chunk})
+                    stream["streamed"].append(chunk)
                 except Exception as e:
-                    streamer_session["streaming_exception"] = e
-                    self.logger.exception("Exception raised in streamer thread")
+                    stream["streaming_exception"] = e
+                    stream_logger = stream.get("logger") or self.logger
+                    stream_logger.exception("Exception raised in streamer thread")
 
-        chunk_joiner = ChunkJoiner(self.logger)
+        stream_logger = streamer_session.get("logger") if streamer_session is not None else None
+        chunk_joiner = ChunkJoiner(stream_logger or self.logger)
         streamer_thread = threading.Thread(target=stream_chunks, daemon=True)
         return streamer_thread, chunk_joiner
 
@@ -123,31 +168,33 @@ class AbstractSSEClient:
         self.stream_chunk(session_id, utterance + " ")
 
     def set_persona(self, session_id, persona):
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
         self._stream_to_frontend(streamer_session, {"event": STREAMING_SET_PERSONA, "data": persona if persona else ""})
 
     def set_voice(self, session_id, voice):
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
         self._stream_to_frontend(streamer_session, {"event": STREAMING_SET_VOICE, "data": voice if voice else ""})
 
     def stream_chunk(self, session_id, chunk):
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
         joiner = streamer_session["chunk_joiner"]
         joiner.add_chunk(chunk)
 
     def flush_stream(self, session_id):
-        self.logger.debug("flushing stream")
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.debug("flushing stream", stream_id=streamer_session["stream_id"])
         joiner = streamer_session["chunk_joiner"]
         joiner.last_chunk_sent()
         streamer_thread = streamer_session["streamer_thread"]
         streamer_thread.join(3.0)
         if streamer_thread.is_alive():
-            self.logger.warn("Streamer thread is still alive!", streamed=self._streamed)
+            stream_logger.warn("Streamer thread is still alive!", streamed=streamer_session["streamed"])
 
     def end_stream(self, session_id):
-        self.logger.debug("ending stream")
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.debug("ending stream", stream_id=streamer_session["stream_id"])
         self._stream_to_frontend(streamer_session, {"event": STREAMING_DONE})
 
 
@@ -310,6 +357,12 @@ class ChunkJoiner:
 class SSEClient(AbstractSSEClient):
     sessions = {}
 
+    def __init__(self, client_id_base, logger, endpoint, port=None):
+        super().__init__(client_id_base, logger, endpoint, port)
+        self.sessions = {}
+        self._sessions_lock = threading.Lock()
+        self._open_sequence = 0
+
     def set_persona(self, session_id, persona):
         if persona:
             super().set_persona(session_id, persona)
@@ -319,15 +372,36 @@ class SSEClient(AbstractSSEClient):
             super().set_voice(session_id, voice)
 
     def open_session(self, session_id, s_and_r_dict=None, logger=None):
-        super().open_session(session_id, s_and_r_dict, logger)
-        streamer_session = self.sessions[session_id]
-        url = f"{self._endpoint}/{self._get_topic(streamer_session)}"
-        self.logger.info("create websocket")
-        session_websocket = websocket.WebSocket()
-        self.logger.info("connecting websocket to URL", url=url)
-        session_websocket.connect(url, timeout=TIMEOUT)
-        self.logger.info("websocket connected", url=url)
-        streamer_session["websocket"] = session_websocket
+        with self._sessions_lock:
+            self._open_sequence += 1
+            open_sequence = self._open_sequence
+        streamer_session = self._create_streamer_session(session_id, s_and_r_dict, logger)
+        streamer_session["open_sequence"] = open_sequence
+        session_websocket = None
+        try:
+            url = f"{self._endpoint}/{self._get_topic(streamer_session)}"
+            stream_logger = streamer_session.get("logger") or self.logger
+            stream_logger.info("create websocket", stream_id=streamer_session["stream_id"])
+            session_websocket = websocket.WebSocket()
+            stream_logger.info("connecting websocket to URL", url=url)
+            session_websocket.connect(url, timeout=TIMEOUT)
+            stream_logger.info("websocket connected", url=url)
+            streamer_session["websocket"] = session_websocket
+            streamer_session["streamer_thread"].start()
+        except BaseException:
+            # Failed/unready streams never enter the public session mapping.
+            with suppress(Exception):
+                streamer_session["chunk_joiner"].last_chunk_sent()
+                streamer_session["streamer_thread"].join(timeout=1.0)
+            if session_websocket is not None:
+                with suppress(Exception):
+                    session_websocket.close()
+            raise
+        with self._sessions_lock:
+            current = self.sessions.get(session_id)
+            if current is None or current.get("open_sequence", -1) < open_sequence:
+                self.sessions[session_id] = streamer_session
+        return SSEStreamHandle(streamer_session)
 
     def _stream_to_frontend(self, streamer_session, message):
         def remove_final_space(message):
@@ -336,24 +410,32 @@ class SSEClient(AbstractSSEClient):
             return message
 
         streamer_session["message_counter"] += 1
-        self.logger.debug(
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.debug(
             "SSE Client streaming to frontend",
             message=message,
             session_id=streamer_session["session_id"],
-            client_id=self.client_id
+            client_id=self.client_id,
+            stream_id=streamer_session["stream_id"],
         )
-        streamer_session["websocket"].send(json.dumps(message))
+        producer_message = dict(message)
+        if streamer_session.get("correlation"):
+            producer_message["stream_id"] = streamer_session["stream_id"]
+            producer_message["correlation"] = dict(streamer_session["correlation"])
+        streamer_session["websocket"].send(json.dumps(producer_message))
 
     def close_session(self, session_id):
-        streamer_session = self.sessions[session_id]
+        streamer_session = self._streamer_session_for(session_id)
         streamer_session["websocket"].close()
         streamer_exception = streamer_session.get("streaming_exception")
         if streamer_exception:
             raise SSEClientException(
-                f'{streamer_exception} was raised during streaming in {streamer_session["session_id"]}. Streamed: {self._streamed}.'
-            )
-        self.logger.debug("close session", client_id=self.client_id, session_id=streamer_session["session_id"])
-        self.logger.info(
+                f'{streamer_exception} was raised during streaming in {streamer_session["session_id"]}. '
+                f'Streamed: {streamer_session["streamed"]}.'
+            ) from streamer_exception
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.debug("close session", client_id=self.client_id, session_id=streamer_session["session_id"])
+        stream_logger.info(
             "Streamed in session",
             num_messages=streamer_session["message_counter"],
             streamed=streamer_session["streamed"]
@@ -370,6 +452,7 @@ class StreamerQueue(threading.Thread):
         self._actual_q = queue.Queue()
         self._sse_client = sse_client
         self._session_id = session_id
+        self._stream_target = session_id
         self._setup_done = threading.Event()
         self._setup_failed = False
         self._setup_exception = None
@@ -392,9 +475,10 @@ class StreamerQueue(threading.Thread):
         def setup():
             try:
                 self.start()
-                self._sse_client.open_session(self.session_id, pronunciation_model)
-                self._sse_client.set_persona(self.session_id, persona)
-                self._sse_client.set_voice(self.session_id, voice)
+                stream = self._sse_client.open_session(self.session_id, pronunciation_model, self._logger)
+                self._stream_target = self.session_id if stream is None else stream
+                self._sse_client.set_persona(self._stream_target, persona)
+                self._sse_client.set_voice(self._stream_target, voice)
             except Exception as exc:
                 self._setup_failed = True
                 self._setup_exception = exc
@@ -430,13 +514,17 @@ class StreamerQueue(threading.Thread):
             if chunk:
                 if chunk == END_STREAM_CHUNK:
                     if not streamed_messages:
-                        self._sse_client.stream_chunk(self.session_id, self._default_utterance)
+                        self._sse_client.stream_chunk(self._stream_target, self._default_utterance)
                     break
                 streamed_messages = True
-                self._sse_client.stream_chunk(self.session_id, chunk)
+                self._sse_client.stream_chunk(self._stream_target, chunk)
 
-        self._sse_client.flush_stream(self.session_id)
+        self._sse_client.flush_stream(self._stream_target)
         if self._end_stream:
-            self._sse_client.end_stream(self.session_id)
-        self._streamed_in_session = self._sse_client.sessions[self.session_id]["streamed"]
-        self._sse_client.close_session(self.session_id)
+            self._sse_client.end_stream(self._stream_target)
+        try:
+            stream = self._stream_target.streamer_session
+        except AttributeError:
+            stream = self._sse_client.sessions[self.session_id]
+        self._streamed_in_session = stream["streamed"]
+        self._sse_client.close_session(self._stream_target)

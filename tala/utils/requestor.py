@@ -4,6 +4,7 @@ from threading import Event, Thread
 
 import requests
 from tala.utils.func import getenv, setup_logger
+from tala.utils.log_context import correlation_headers, request_id_from_payload as correlation_request_id
 
 REQUESTOR_URL = getenv("FUNCTION_ENDPOINT_REQUESTOR", "Define the Requestor function endpoint in the environment.")
 REQUESTOR_BASE_URL = getenv(
@@ -173,6 +174,7 @@ def make_request(endpoint, json_request, read_timeout, logger):
         return response
 
     headers = {'Content-type': 'application/json'}
+    headers.update(correlation_headers(logger, request_id=correlation_request_id(json_request)))
     response_object = request(headers)
     try:
         response = decode(response_object)
