@@ -9,6 +9,74 @@ from tala.utils import sse_client
 
 
 class TestSSEStreamCorrelation:
+    @pytest.mark.parametrize("enabled,expected_chunks", [(True, ["Howdy "]), (False, ["Hel", "lo "])])
+    def test_pronunciation_modes_preserve_stream_handle_and_context(self, monkeypatch, enabled, expected_chunks):
+        self.given_fake_websockets_and_client(monkeypatch)
+        self.given_pronunciation_mode(monkeypatch, enabled)
+        try:
+            self.when_pronunciation_chunks_are_sent()
+            self.then_pronunciation_text_and_context_match(expected_chunks)
+        finally:
+            self.cleanup_streams()
+
+    @pytest.mark.parametrize(
+        "call_style,expected_chunks", [
+            ("positional_mode", ["Hel", "lo "]),
+            ("keyword_mode", ["Hello "]),
+            ("positional_record", ["Hello "]),
+        ]
+    )
+    def test_streamer_helper_preserves_both_parent_call_styles(self, monkeypatch, call_style, expected_chunks):
+        self.given_fake_websockets_and_client(monkeypatch)
+        self.given_helper_call_style(call_style)
+        self.when_helper_chunks_are_collected()
+        self.then_helper_chunks_match(expected_chunks)
+
+    def given_pronunciation_mode(self, monkeypatch, enabled):
+        self.pronunciation_enabled = enabled
+        monkeypatch.setenv("PRONUNCIATION_REPLACEMENTS_ENABLED", "true" if enabled else "false")
+        self.pronunciation_stream = self.client.open_session(
+            "conversation", {"Hello": "Howdy"}, logger=self.request_logger("request-1")
+        )
+
+    def when_pronunciation_chunks_are_sent(self):
+        self.client.stream_chunk(self.pronunciation_stream, "Hel")
+        self.client.stream_chunk(self.pronunciation_stream, "lo ")
+        self.client.flush_stream(self.pronunciation_stream)
+        self.client.end_stream(self.pronunciation_stream)
+
+    def then_pronunciation_text_and_context_match(self, expected_chunks):
+        messages = self.websockets[0].messages
+        assert [message["data"] for message in messages[:-1]] == expected_chunks
+        assert messages[-1]["event"] == "STREAMING_DONE"
+        assert all(message["stream_id"] == self.pronunciation_stream.stream_id for message in messages)
+        assert all(message["correlation"]["request_id"] == "request-1" for message in messages)
+        expected_model = {"Hello": "Howdy"} if self.pronunciation_enabled else {}
+        assert self.pronunciation_stream.streamer_session["search_and_replace_dict"] == expected_model
+
+    def given_helper_call_style(self, call_style):
+        prepare = sse_client.AbstractSSEClient._prepare_streamer_thread
+        if call_style == "positional_mode":
+            self.helper_thread, self.helper_joiner = prepare(self.client, "conversation", False)
+        elif call_style == "keyword_mode":
+            self.helper_thread, self.helper_joiner = prepare(
+                self.client, "conversation", apply_pronunciation_replacements=True
+            )
+        else:
+            record = {"session_id": "conversation", "search_and_replace_dict": {"Hello": "Howdy"}, "logger": Mock()}
+            self.helper_thread, self.helper_joiner = prepare(self.client, "conversation", record)
+
+    def when_helper_chunks_are_collected(self):
+        self.helper_joiner.add_chunk("Hel")
+        self.helper_joiner.add_chunk("lo ")
+        self.helper_joiner.last_chunk_sent()
+        self.helper_chunks = list(self.helper_joiner)
+
+    def then_helper_chunks_match(self, expected_chunks):
+        assert self.helper_chunks == expected_chunks
+        assert self.helper_thread.daemon
+        assert self.helper_thread.ident is None
+
     def test_overlapping_failed_opens_leave_the_original_active_session(self, monkeypatch):
         self.given_fake_websockets_and_client(monkeypatch)
         self.given_an_active_stream()
