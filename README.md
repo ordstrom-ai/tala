@@ -62,6 +62,17 @@ tala-interact "https://your-host/interact/your-id" --ddd my_ddd
 Replace the example URL with the endpoint provided by your dialogue-service
 deployment. The service must be running and accessible from your machine.
 
+## Streaming pronunciation replacements
+
+The SSE and MQTT clients can replace configured spellings in streamed text for
+TTS pronunciation. This compatibility feature is enabled by default. Set
+`PRONUNCIATION_REPLACEMENTS_ENABLED=false` in a service's environment to disable
+replacements and their word-boundary buffering. The setting is read when each
+stream session opens. When the selected replacement model is empty, chunks are
+passed through without word-boundary lookahead automatically. A non-empty model
+still uses replacement buffering, even for utterances that do not match one of
+its entries.
+
 ## Language-model requests
 
 Tala includes `GPTRequest`, a Python client for the platform’s **Requestor
