@@ -1,12 +1,13 @@
 import structlog
 import time
+import queue
 import threading
 import random
 import uuid
 
 import pytest
 
-from tala.utils.sse_client import SSEClient, ChunkJoiner, StreamerQueue
+from tala.utils.sse_client import AbstractSSEClient, SSEClient, ChunkJoiner, StreamerQueue
 from tala.utils.func import configure_stdout_logging, getenv
 
 logger = structlog.get_logger(__name__)
@@ -132,6 +133,67 @@ class TestSSEClient:
             for item in streamed:
                 if item["event"] == "STREAMING_CHUNK":
                     assert session_id + " " == item["data"]
+
+
+class RecordingSSEClient(AbstractSSEClient):
+    def __init__(self):
+        super().__init__("test-client", logger, "wss://example.org")
+        self.sessions = {}
+        self.messages = queue.Queue()
+
+    def _stream_to_frontend(self, streamer_session, message):
+        self.messages.put(message)
+
+
+class TestPronunciationReplacementStreaming:
+    def test_disabled_replacements_pass_chunks_through_before_flush(self, monkeypatch):
+        self.given_client(monkeypatch, "false", {"Hello": "Howdy"})
+        self.when_session_opened()
+        self.when_chunk_streamed("Hel")
+        self.when_chunk_streamed("lo")
+        self.then_chunks_are_delivered_in_order_before_flush(["Hel", "lo"])
+
+    def test_empty_replacement_model_passes_chunks_through_before_flush(self, monkeypatch):
+        self.given_client(monkeypatch, "true", {})
+        self.when_session_opened()
+        self.when_chunk_streamed("Hello")
+        self.then_chunks_are_delivered_in_order_before_flush(["Hello"])
+
+    def test_default_keeps_existing_replacement_behavior(self, monkeypatch):
+        self.given_client(monkeypatch, None, {"Hello": "Howdy"})
+        self.when_session_opened()
+        self.when_chunk_streamed("Hello ")
+        self.when_stream_flushed()
+        self.then_streamed_text_is("Howdy ")
+
+    def given_client(self, monkeypatch, setting, replacement_model):
+        if setting is None:
+            monkeypatch.delenv("PRONUNCIATION_REPLACEMENTS_ENABLED", raising=False)
+        else:
+            monkeypatch.setenv("PRONUNCIATION_REPLACEMENTS_ENABLED", setting)
+        self._client = RecordingSSEClient()
+        self._replacement_model = replacement_model
+        self._session_id = str(uuid.uuid4())
+
+    def when_session_opened(self):
+        self._client.open_session(self._session_id, self._replacement_model)
+
+    def when_chunk_streamed(self, chunk):
+        self._client.stream_chunk(self._session_id, chunk)
+
+    def when_stream_flushed(self):
+        self._client.flush_stream(self._session_id)
+
+    def then_chunks_are_delivered_in_order_before_flush(self, expected_chunks):
+        try:
+            actual_chunks = [self._client.messages.get(timeout=0.5)["data"] for _ in expected_chunks]
+            assert actual_chunks == expected_chunks
+        finally:
+            self.when_stream_flushed()
+        assert self._client.sessions[self._session_id]["streamed"] == expected_chunks
+
+    def then_streamed_text_is(self, expected_text):
+        assert self._client.sessions[self._session_id]["streamed"] == [expected_text]
 
 
 class FailingSSEClient:

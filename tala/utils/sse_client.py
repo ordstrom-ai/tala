@@ -1,6 +1,7 @@
 import json
-import threading
+import os
 import queue
+import threading
 import uuid
 
 import websocket
@@ -11,6 +12,8 @@ STREAMING_SET_PERSONA = "STREAMING_SET_PERSONA"
 STREAMING_SET_VOICE = "STREAMING_SET_VOICE"
 STREAMING_CHUNK = "STREAMING_CHUNK"
 TIMEOUT = 5.0
+PRONUNCIATION_REPLACEMENTS_ENABLED = "PRONUNCIATION_REPLACEMENTS_ENABLED"
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 class SSEClientException(BaseException):
@@ -51,13 +54,22 @@ class AbstractSSEClient:
     def _get_topic(self, streamer_session):
         return f'tm/{streamer_session["session_id"]}'
 
+    def _pronunciation_replacements_enabled(self):
+        setting = os.getenv(PRONUNCIATION_REPLACEMENTS_ENABLED, "true")
+        return setting.strip().lower() not in _FALSE_VALUES
+
     def open_session(self, session_id, s_and_r_dict=None, logger=None):
         self.logger.debug("sse client open session", session_id=session_id)
-        streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id)
+        replacement_model = s_and_r_dict or {}
+        if not self._pronunciation_replacements_enabled():
+            replacement_model = {}
+        streamer_thread, chunk_joiner = self._prepare_streamer_thread(
+            session_id, apply_pronunciation_replacements=bool(replacement_model)
+        )
 
         streamer_session = {
             "session_id": session_id,
-            "search_and_replace_dict": s_and_r_dict if s_and_r_dict else {},
+            "search_and_replace_dict": replacement_model,
             "message_counter": 0,
             "streamed": [],
             "logger": logger,
@@ -100,7 +112,7 @@ class AbstractSSEClient:
                 chunk = chunk.replace(key, search_and_replace_dict[key], 1)
         return chunk
 
-    def _prepare_streamer_thread(self, session_id):
+    def _prepare_streamer_thread(self, session_id, apply_pronunciation_replacements=True):
         def stream_chunks():
             self._streaming_exception = None
             streamer_session = self.sessions[session_id]
@@ -113,7 +125,10 @@ class AbstractSSEClient:
                     streamer_session["streaming_exception"] = e
                     self.logger.exception("Exception raised in streamer thread")
 
-        chunk_joiner = ChunkJoiner(self.logger)
+        if apply_pronunciation_replacements:
+            chunk_joiner = ChunkJoiner(self.logger)
+        else:
+            chunk_joiner = _PassThroughChunkJoiner(self.logger)
         streamer_thread = threading.Thread(target=stream_chunks, daemon=True)
         return streamer_thread, chunk_joiner
 
@@ -305,6 +320,17 @@ class ChunkJoiner:
 
     def __iter__(self):
         return self
+
+
+class _PassThroughChunkJoiner(ChunkJoiner):
+    """Deliver each queued chunk as soon as it arrives, without word lookahead."""
+    def _get_next_segment(self):
+        while True:
+            try:
+                return self._chunk_queue.get(timeout=0.05)
+            except queue.Empty:
+                if self._received_last_chunk.is_set():
+                    raise StopIteration
 
 
 class SSEClient(AbstractSSEClient):

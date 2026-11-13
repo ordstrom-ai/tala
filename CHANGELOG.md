@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- SSE/MQTT streaming: add `PRONUNCIATION_REPLACEMENTS_ENABLED` to disable
+  pronunciation replacements and word-boundary buffering; empty replacement
+  models now use immediate ordered pass-through.
 
 ## [31.3.0] - 2026-11-12
 - DDD: allow `forget` and `forget_shared` to target `action_status` propositions.
