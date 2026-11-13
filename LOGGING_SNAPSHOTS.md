@@ -56,6 +56,34 @@ failures expose only the exception class, not potentially sensitive error text.
 An ID with any state other than `stored` is not a usable snapshot reference.
 Strict unavailable summaries are opt-in for non-transcript events only.
 
+## Caller metadata collisions
+
+On an oversized event, top-level snapshot metadata belongs to the renderer.
+Caller values using those same names are preserved under `log_original_fields`,
+including caller-supplied counters, reasons, and errors. If the caller already
+provided `log_original_fields`, its value is retained as
+`log_original_fields.log_original_fields`; it is not discarded or mutated.
+Other caller fields remain in place, and small records remain unchanged.
+
+The stored snapshot is always the original sanitized event, before renderer
+metadata or this collision wrapper is added. A bulky collision wrapper can be
+replaced with a snapshot marker only after approved storage succeeds (or by
+explicit strict unavailable rendering for non-transcript events). Normal
+unavailable/failed logging preserves the original values in full. Readers must
+distinguish generated top-level metadata from caller metadata in the wrapper.
+
+## Context and initialization
+
+`FuncBase` preserves an existing bound root correlation ID unless a valid incoming
+root header explicitly replaces it. The payload's local request ID remains
+separate; it initializes the root only when no root is known. Parent logger
+context is not mutated when creating a request logger.
+
+Logging configuration uses a reentrant lock around process-wide setup and
+root/file/access handler check-and-add operations. Concurrent setup does not add
+duplicate handlers or close existing host handlers. The lock is not held during
+ordinary logging, admission checks, or snapshot writes.
+
 `BlobLogSnapshotStore` is an immutable-write/read storage adapter with an injected
 private container client and validated UUID/prefix paths. It performs no content
 admission or redaction itself. Its client must enforce bounded network

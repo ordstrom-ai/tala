@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Logging: preserve caller snapshot-metadata collisions in `log_original_fields`,
+  retain inherited root correlation unless explicitly replaced by an incoming
+  root header, and serialize handler initialization across threads.
 - Logging: preserve preconfigured root handlers without closing them. An optional
   snapshot writer, explicit capture-admission policy, and `BlobLogSnapshotStore`
   archive approved oversized diagnostic events; only the

@@ -4,13 +4,16 @@ import logging
 import os
 import re
 import sys
+from threading import RLock
 import uuid
 
 from structlog.processors import JSONRenderer, TimeStamper, StackInfoRenderer, format_exc_info
 from structlog.stdlib import add_log_level, filter_by_level, add_logger_name
 import structlog
 
-from tala.utils.log_context import correlation_context, request_id_from_payload
+from tala.utils.log_context import correlation_context, request_id_from_payload, validated_correlation_context
+
+_LOGGING_CONFIGURATION_LOCK = RLock()
 
 
 class EnvironmentVariableNotDefinedException(Exception):
@@ -65,9 +68,13 @@ class FuncBase:
             "device_id": get_device_id(),
         })
         request_id = get_request_id()
+        try:
+            parent_context = validated_correlation_context(structlog.get_context(logger))
+        except (AttributeError, TypeError):
+            parent_context = {}
         optional_context = {
             "request_id": request_id,
-            "correlation_id": header_context.get("correlation_id", request_id),
+            "correlation_id": header_context.get("correlation_id", parent_context.get("correlation_id", request_id)),
             "offer_id": _value_at(session, "offer_id"),
             "turn_id": _value_at(session, "turn_counter"),
         }
@@ -224,8 +231,7 @@ class BoundedJSONRenderer:
             snapshot_id, snapshot_state, len(snapshot_json.encode("utf-8")), snapshot_error, snapshot_reason
         )
         if snapshot_state != "stored" and (self.preserve_unarchived_fields or contains_transcript):
-            fallback = dict(ordered_event)
-            fallback.update(snapshot_metadata)
+            fallback = self._with_snapshot_metadata(ordered_event, snapshot_metadata)
             return self._render(logger, name, self._prioritize_fields(fallback))
 
         summary = self._snapshot_summary(
@@ -260,7 +266,8 @@ class BoundedJSONRenderer:
     def _prioritize_fields(event_dict):
         ordered_event = {
             field: event_dict[field]
-            for field in PRIORITIZED_LOG_FIELDS + SNAPSHOT_METADATA_FIELDS if field in event_dict
+            for field in PRIORITIZED_LOG_FIELDS + SNAPSHOT_METADATA_FIELDS + ("log_original_fields", )
+            if field in event_dict
         }
         ordered_event.update({field: value for field, value in event_dict.items() if field not in ordered_event})
         return ordered_event
@@ -287,23 +294,31 @@ class BoundedJSONRenderer:
             metadata["log_snapshot_reason"] = snapshot_reason
         return metadata
 
+    @staticmethod
+    def _with_snapshot_metadata(event_dict, snapshot_metadata):
+        reserved = SNAPSHOT_METADATA_FIELDS + ("log_original_fields", )
+        original_fields = {field: event_dict[field] for field in reserved if field in event_dict}
+        log_event = {field: value for field, value in event_dict.items() if field not in reserved}
+        if original_fields:
+            log_event["log_original_fields"] = original_fields
+        log_event.update(snapshot_metadata)
+        return log_event
+
     def _snapshot_summary(self, logger, name, event_dict, snapshot_metadata):
-        summary = dict(event_dict)
-        summary.update(snapshot_metadata)
+        summary = self._with_snapshot_metadata(event_dict, snapshot_metadata)
         snapshot_state = snapshot_metadata["log_snapshot_state"]
         count_field = "log_fields_archived" if snapshot_state == "stored" else "log_fields_unavailable"
         summary[count_field] = 0
 
         optional_fields = [
-            field for field in event_dict
-            if field not in PRIORITIZED_LOG_FIELDS and field not in SNAPSHOT_METADATA_FIELDS
+            field for field in summary if field not in PRIORITIZED_LOG_FIELDS and field not in SNAPSHOT_METADATA_FIELDS
         ]
         context_fields = [
-            field for field in event_dict if field in PRIORITIZED_LOG_FIELDS and field not in CORE_LOG_FIELDS
+            field for field in summary if field in PRIORITIZED_LOG_FIELDS and field not in CORE_LOG_FIELDS
         ]
-        core_fields = [field for field in CORE_LOG_FIELDS if field in event_dict]
+        core_fields = [field for field in CORE_LOG_FIELDS if field in summary]
         for field_group in (optional_fields, context_fields, core_fields):
-            field_sizes = {field: self._field_size(logger, name, field, event_dict[field]) for field in field_group}
+            field_sizes = {field: self._field_size(logger, name, field, summary[field]) for field in field_group}
             for field in sorted(field_group, key=field_sizes.get, reverse=True):
                 rendered = self._render(logger, name, self._prioritize_fields(summary))
                 if self._within_limit(rendered):
@@ -353,6 +368,11 @@ def redact_bulky_entries_in_session(_, __, input_event_dict):
 
 
 def configure_stdout_logging(level=None):
+    with _LOGGING_CONFIGURATION_LOCK:
+        _configure_stdout_logging(level)
+
+
+def _configure_stdout_logging(level):
     level = level or os.getenv("LOG_LEVEL", default="INFO")
     log_file = os.getenv("TDM_LOG_FILE")
     structlog.configure(
