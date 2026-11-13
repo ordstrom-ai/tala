@@ -24,8 +24,10 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependency freshness checker
+        if: github.event_name == 'pull_request'
         run: python -m pip install pur
       - name: Check dependency freshness
+        if: github.event_name == 'pull_request'
         run: python test_requirements.py
       - name: Install development and package dependencies
         run: |

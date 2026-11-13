@@ -4,6 +4,25 @@ record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
 
+## [31.5.0] - 2026-11-13
+- Logging: preserve existing host/exporter handlers and make root, file, and
+  access-handler initialization safe under concurrent setup.
+- Diagnostics: add optional oversized-event snapshots with explicit capture
+  admission. Replace bulky fields with references only after approved storage
+  succeeds; preserve conflicting caller metadata in `log_original_fields`.
+- Safety: retain existing redactions and keep recognized transcript content out
+  of diagnostic snapshots. Missing, rejected, or failed capture retains original
+  fields with an explicit status; that fallback can still exceed telemetry limits.
+  No production capture policy or storage wiring is enabled by this release.
+- Correlation: accept and propagate bounded, text-free HTTP identifiers while
+  keeping inherited root correlation separate from local request IDs.
+- SSE: add optional stream handles and copied producer correlation metadata.
+  Isolate overlapping producer state and connection/startup/send failures while
+  preserving consumer event/data/text, MQTT messages, and 31.4.0 pronunciation
+  replacement/pass-through behavior. Legacy session-ID calls remain supported.
+- CI: require dependency freshness on PR submissions, not again on resulting
+  `main` commits. Application tests, lint, and artifact checks still run on both.
+
 ## [31.4.0] - 2026-11-13
 - SSE/MQTT streaming: add `PRONUNCIATION_REPLACEMENTS_ENABLED` to disable
   text substitutions used to guide TTS pronunciation, along with their
