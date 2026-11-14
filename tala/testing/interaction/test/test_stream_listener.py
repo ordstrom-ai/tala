@@ -48,8 +48,10 @@ class ObservableEvent:
     def __init__(self):
         self._event = threading.Event()
         self.wait_started = threading.Event()
+        self.wait_timeout = None
 
     def wait(self, timeout=None):
+        self.wait_timeout = timeout
         self.wait_started.set()
         return self._event.wait(timeout)
 
@@ -94,20 +96,10 @@ class TestStreamListener:
 
 
 class TestStreamListenerCompletion:
-    def given_controlled_stream(self, monkeypatch, send_initial_chunk, send_completion, timeout):
-        self._response = ControlledStreamResponse(send_initial_chunk, send_completion)
-        self._completion_event = ObservableEvent()
-        self._listener = StreamListener("https://example.invalid/events", "test-session", logger)
-        self._listener._stopped = self._completion_event
-        monkeypatch.setattr(stream_listener.requests, "get", Mock(return_value=self._response))
-        monkeypatch.setattr(stream_listener, "STREAM_COMPLETION_TIMEOUT", timeout, raising=False)
-        # Model the previous short payload wait to keep this regression fast.
-        monkeypatch.setattr(stream_listener, "TIMEOUT", 0.01, raising=False)
-
-    def when_listener_starts(self):
-        self._listener.start()
-        assert self._listener.stream_started.wait(1)
-        assert self._response.iteration_started.wait(1)
+    def test_waits_for_response_headers_within_request_timeout_bounds(self, monkeypatch):
+        self.given_delayed_response_headers(monkeypatch)
+        self.when_waiting_for_stream_start(release_headers=True)
+        self.then_stream_started_with_bounded_request_timeouts()
 
     def given_delayed_response_headers(self, monkeypatch):
         monkeypatch.setattr(stream_listener, "STREAM_CONNECT_TIMEOUT", 0.01)
@@ -119,15 +111,17 @@ class TestStreamListenerCompletion:
         self._request = DelayedHeadersRequest(self._response)
         monkeypatch.setattr(stream_listener.requests, "get", self._request)
         self._listener = StreamListener("https://example.invalid/events", "test-session", logger)
+        self._startup_event = ObservableEvent()
+        self._listener.stream_started = self._startup_event
 
     def when_waiting_for_stream_start(self, release_headers):
         self._listener.start()
         pool = ThreadPoolExecutor(max_workers=1)
         future = pool.submit(self._listener.wait_until_started)
         release = None
+        self._request_started = self._request.started.wait(1)
         self._start_error = None
         try:
-            assert self._request.started.wait(1)
             if release_headers:
                 release = threading.Timer(0.05, self._request.release_headers.set)
                 release.start()
@@ -142,22 +136,23 @@ class TestStreamListenerCompletion:
             self._listener.join(1)
             pool.shutdown(wait=True)
 
-    def test_waits_for_response_headers_within_request_timeout_bounds(self, monkeypatch):
-        self.given_delayed_response_headers(monkeypatch)
-        self.when_waiting_for_stream_start(release_headers=True)
-        self.then_stream_started_with_bounded_request_timeouts()
+    def then_stream_started_with_bounded_request_timeouts(self):
+        assert self._request_started
+        assert self._start_error is None
+        assert stream_listener.STREAM_START_TIMEOUT > (
+            stream_listener.STREAM_CONNECT_TIMEOUT + stream_listener.STREAM_READ_TIMEOUT
+        )
+        assert self._startup_event.wait_timeout == stream_listener.STREAM_START_TIMEOUT
+        assert self._request.timeout == (stream_listener.STREAM_CONNECT_TIMEOUT, stream_listener.STREAM_READ_TIMEOUT)
+        assert not self._listener.is_alive()
 
     def test_response_header_timeout_stops_listener_before_reporting_failure(self, monkeypatch):
         self.given_delayed_response_headers(monkeypatch)
         self.when_waiting_for_stream_start(release_headers=False)
         self.then_stream_start_timeout_is_reported_and_listener_is_closed()
 
-    def then_stream_started_with_bounded_request_timeouts(self):
-        assert self._start_error is None
-        assert self._request.timeout == (stream_listener.STREAM_CONNECT_TIMEOUT, stream_listener.STREAM_READ_TIMEOUT)
-        assert not self._listener.is_alive()
-
     def then_stream_start_timeout_is_reported_and_listener_is_closed(self):
+        assert self._request_started
         assert self._start_error is not None
         assert "timed out" in str(self._start_error).lower()
         assert not self._listener.is_alive()
@@ -165,12 +160,31 @@ class TestStreamListenerCompletion:
     def test_waits_for_delayed_stream_completion_before_returning_text(self, monkeypatch):
         self.given_controlled_stream(monkeypatch, send_initial_chunk=False, send_completion=True, timeout=1.0)
         self.when_listener_starts()
+        self.when_delayed_stream_is_consumed()
+        self.then_complete_delayed_text_is_returned()
+
+    def given_controlled_stream(self, monkeypatch, send_initial_chunk, send_completion, timeout):
+        self._response = ControlledStreamResponse(send_initial_chunk, send_completion)
+        self._completion_event = ObservableEvent()
+        self._listener = StreamListener("https://example.invalid/events", "test-session", logger)
+        self._listener._stopped = self._completion_event
+        monkeypatch.setattr(stream_listener.requests, "get", Mock(return_value=self._response))
+        monkeypatch.setattr(stream_listener, "STREAM_COMPLETION_TIMEOUT", timeout, raising=False)
+        # Model the previous short payload wait to keep this regression fast.
+        monkeypatch.setattr(stream_listener, "TIMEOUT", 0.01, raising=False)
+
+    def when_listener_starts(self):
+        self._listener.start()
+        self._stream_started = self._listener.stream_started.wait(1)
+        self._iteration_started = self._response.iteration_started.wait(1)
+
+    def when_delayed_stream_is_consumed(self):
         pool = ThreadPoolExecutor(max_workers=1)
         future = pool.submit(lambda: self._listener.system_utterance)
         release = None
+        self._completion_wait_started = self._completion_event.wait_started.wait(1)
+        self._future_pending_before_release = not future.done()
         try:
-            assert self._completion_event.wait_started.wait(1)
-            assert not future.done()
             release = threading.Timer(0.05, self._response.release_producer.set)
             release.start()
             self._utterance = future.result(timeout=2)
@@ -180,9 +194,12 @@ class TestStreamListenerCompletion:
             self._response.close()
             self._listener.join(1)
             pool.shutdown(wait=True)
-        self.then_complete_delayed_text_is_returned()
 
     def then_complete_delayed_text_is_returned(self):
+        assert self._stream_started
+        assert self._iteration_started
+        assert self._completion_wait_started
+        assert self._future_pending_before_release
         assert self._utterance == "delayed menu."
         assert self._listener.streaming_ended is not None
         assert not self._listener.is_alive()
