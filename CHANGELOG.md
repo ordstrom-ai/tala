@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Interaction testing: wait up to 10 seconds for streamed output to finish;
+  report connection, stream, and completion timeouts instead of returning
+  partial or empty speech, and close the listener after failures.
 
 ## [31.5.0] - 2026-11-13
 - Logging: preserve existing host/exporter handlers and make root, file, and

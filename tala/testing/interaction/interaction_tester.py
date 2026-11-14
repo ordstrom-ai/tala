@@ -18,6 +18,8 @@ from tala.utils.tdm_client import TDMClient
 from tala.testing.interaction.comparison import StringComparison, MoveComparison
 from tala.testing.interaction.progress import InteractionTestProgress
 from tala.testing.interaction.stream_listener import StreamListener
+from tala.testing.interaction.stream_listener import StreamListenerError
+from tala.testing.interaction.stream_listener import StreamListenerTimeoutError
 
 from tala.utils.func import configure_stdout_logging, getenv
 
@@ -227,7 +229,17 @@ class InteractionTester:
                 StreamListener.SSE_BROKER_ENDPOINT_HTTPS, self._session_id, logger
             )
             self._stream_listener_thread.start()
-            self._stream_listener_thread.stream_started.wait()
+            try:
+                self._stream_listener_thread.wait_until_started()
+            except (StreamListenerError, StreamListenerTimeoutError):
+                self._stop_stream_listener()
+                raise
+
+    def _stop_stream_listener(self):
+        listener = getattr(self, "_stream_listener_thread", None)
+        if listener is not None:
+            self._stream_listener_thread = None
+            listener.stop()
 
     def _start_clock(self):
         self._start_time = time.time()
@@ -316,6 +328,7 @@ class InteractionTester:
                     interpretations, self._session_data, entities
                 )
             except Exception as e:
+                self._stop_stream_listener()
                 raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
             logger.info("semantic_input response", response=_redact_interaction_log_payload(self._latest_response))
             self._add_streamed_output()
@@ -327,9 +340,10 @@ class InteractionTester:
                 self._latest_response[OUTPUT][UTTERANCE] = self._stream_listener_thread.system_utterance
                 self._stream_start_times.append(self._stream_listener_thread.streaming_started)
                 self._stream_end_times.append(self._stream_listener_thread.streaming_ended)
-                self._stream_listener_thread = None
             except KeyError as e:
                 warnings.warn(f"latest response has no '{OUTPUT}' field: {e}")
+            finally:
+                self._stop_stream_listener()
 
     def _request_passivity(self):
         with self._progress.request("passivity"):
@@ -338,6 +352,7 @@ class InteractionTester:
             try:
                 self._latest_response = self._client.request_passivity(self._session_data)
             except Exception as e:
+                self._stop_stream_listener()
                 raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
             logger.info("passivity response", response=_redact_interaction_log_payload(self._latest_response))
             self._add_streamed_output()
@@ -351,6 +366,7 @@ class InteractionTester:
             try:
                 self._latest_response = self._client.request_speech_input(hypotheses, self._session_data)
             except Exception as e:
+                self._stop_stream_listener()
                 raise InteractionTesterException("Exception when executing test", e, traceback.format_exc())
             logger.info("speech_input response", response=_redact_interaction_log_payload(self._latest_response))
             self._add_streamed_output()
