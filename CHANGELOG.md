@@ -6,29 +6,6 @@ record before 12.0.0, see CHANGELOG.legacy.md.
 - Interaction testing: wait up to 10 seconds for streamed output to finish;
   report connection, stream, and completion timeouts instead of returning
   partial or empty speech, and close the listener after failures.
-- Logging: preserve caller snapshot-metadata collisions in `log_original_fields`,
-  retain inherited root correlation unless explicitly replaced by an incoming
-  root header, and serialize handler initialization across threads.
-- Logging: preserve preconfigured root handlers without closing them. An optional
-  snapshot writer, explicit capture-admission policy, and `BlobLogSnapshotStore`
-  archive approved oversized diagnostic events; only the
-  largest fields are replaced to fit the 6 KiB summary budget after storage succeeds.
-  Without storage, or when it fails, normal logging preserves the original fields
-  with explicit archive status; Azure's existing size limits can still truncate that fallback.
-- Logging: a writer alone does not authorize capture. Missing/rejecting/failing
-  policies report `not_permitted`. Recognized transcript fields are never copied
-  to diagnostic snapshots or removed from their standard-log fallback, including
-  in strict rendering mode. No production capture policy is installed.
-- Logging: bind available request, offer, and turn IDs in `FuncBase` log context
-  so utterance archive records can be joined to service logs.
-- Logging: propagate bounded, text-free HTTP correlation headers and accept them
-  in `FuncBase`. Preserve root correlation IDs separately from local GPT-call IDs.
-- SSE: add optional per-stream handles and copied correlation metadata for
-  producer envelopes. Overlapping streams keep separate context; legacy SSE
-  event/data and MQTT messages remain unchanged.
-- SSE: publish a session only after connection and joiner startup succeed, so
-  overlapping failures cannot restore unusable sessions or replace newer streams.
-  Send failures report the failing stream's own output and preserve their cause.
 
 ## [31.5.0] - 2026-11-13
 - Logging: preserve existing host/exporter handlers and make root, file, and
