@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Interaction testing: wait up to 10 seconds for streamed output to finish;
+  report connection, stream, and completion timeouts instead of returning
+  partial or empty speech, and close the listener after failures.
 - Logging: preserve caller snapshot-metadata collisions in `log_original_fields`,
   retain inherited root correlation unless explicitly replaced by an incoming
   root header, and serialize handler initialization across threads.

@@ -1,10 +1,21 @@
-import requests
 import threading
 import time
 
+import requests
+
 from tala.utils.func import getenv
 
-TIMEOUT = 2.0
+STREAM_CONNECT_TIMEOUT = 5.0
+STREAM_COMPLETION_TIMEOUT = 10.0
+STREAM_SHUTDOWN_TIMEOUT = 1.0
+
+
+class StreamListenerError(RuntimeError):
+    pass
+
+
+class StreamListenerTimeoutError(TimeoutError):
+    pass
 
 
 class StreamListener(threading.Thread):
@@ -22,21 +33,79 @@ class StreamListener(threading.Thread):
         self._streaming_ended = None
         self._logger = logger
         self._streamed_messages = []
+        self._response = None
+        self._stream_error = None
+        self._stream_error_is_timeout = False
         super().__init__(daemon=True)
 
     def run(self):
         url = f"{self._streamer_url}/{self._session_id}"
-        with requests.get(url, stream=True) as response:
-            self.stream_started.set()
-            self._logger.info("listening to stream", url=url)
-            for line in response.iter_lines():
-                if line:  # filter out keep-alive new lines
-                    decoded_line = line.decode('utf-8')
-                    self.process_line(decoded_line)
+        try:
+            with requests.get(
+                url, stream=True, timeout=(STREAM_CONNECT_TIMEOUT, STREAM_COMPLETION_TIMEOUT)
+            ) as response:
+                self._response = response
+                response.raise_for_status()
+                self.stream_started.set()
+                self._logger.info("listening to stream", url=url)
                 if self._please_stop.is_set():
-                    break
-        self._logger.info("stream listener stopped listening, stream closed", received_messages=self._streamed_messages)
-        self._stopped.set()
+                    return
+                for line in response.iter_lines():
+                    if self._please_stop.is_set():
+                        break
+                    if line:  # filter out keep-alive new lines
+                        self.process_line(line.decode("utf-8"))
+                    if self._please_stop.is_set():
+                        break
+        except requests.Timeout as error:
+            if not self._please_stop.is_set():
+                self._stream_error = error
+                self._stream_error_is_timeout = True
+                self._logger.exception("stream listener timed out", session_id=self._session_id, url=url)
+        except Exception as error:
+            if not self._please_stop.is_set():
+                self._stream_error = error
+                self._logger.exception("stream listener failed", session_id=self._session_id, url=url)
+        finally:
+            # Wake startup waiters when connection establishment fails as well.
+            self.stream_started.set()
+            self._response = None
+            self._stopped.set()
+            self._logger.info(
+                "stream listener stopped listening, stream closed", received_messages=self._streamed_messages
+            )
+
+    def wait_until_started(self, timeout=STREAM_CONNECT_TIMEOUT):
+        if not self.stream_started.wait(timeout):
+            self.stop()
+            raise StreamListenerTimeoutError(
+                f"Timed out after {timeout:g}s waiting for the SSE connection for session {self._session_id}"
+            )
+        self._raise_stream_error()
+
+    def _wait_for_completion(self):
+        if not self._stopped.wait(STREAM_COMPLETION_TIMEOUT):
+            self._logger.warning(
+                "stream listener timed out waiting for completion",
+                session_id=self._session_id,
+                timeout_seconds=STREAM_COMPLETION_TIMEOUT,
+            )
+            self.stop()
+            raise StreamListenerTimeoutError(
+                f"Timed out after {STREAM_COMPLETION_TIMEOUT:g}s waiting for stream completion "
+                f"(STREAMING_DONE) for session {self._session_id}"
+            )
+        self._raise_stream_error()
+        if self._streaming_ended is None:
+            raise StreamListenerError(f"The SSE connection closed before STREAMING_DONE for session {self._session_id}")
+
+    def _raise_stream_error(self):
+        if self._stream_error is None:
+            return
+        if self._stream_error_is_timeout:
+            raise StreamListenerTimeoutError(f"The SSE request timed out for session {self._session_id}") \
+                from self._stream_error
+        raise StreamListenerError(f"The SSE request failed for session {self._session_id}") from self._stream_error
 
     def process_line(self, line):
         def is_event():
@@ -76,9 +145,16 @@ class StreamListener(threading.Thread):
     def please_stop(self):
         self._please_stop.set()
 
+    def stop(self):
+        self.please_stop()
+        if self._response is not None:
+            self._response.close()
+        if self.is_alive() and threading.current_thread() is not self:
+            self.join(STREAM_SHUTDOWN_TIMEOUT)
+
     @property
     def payload(self):
-        self._stopped.wait(TIMEOUT)
+        self._wait_for_completion()
         return self._streamed_messages
 
     @property
