@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Interaction testing: stop waiting for streamed speech when a silent response
+  has no speech expectation. Speech-asserting turns still require completed SSE
+  output and use streamed text.
 - Interaction testing: wait up to 10 seconds for streamed output to finish;
   report connection, stream, and completion timeouts instead of returning
   partial or empty speech, and close the listener after failures.
