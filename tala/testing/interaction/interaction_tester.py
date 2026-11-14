@@ -2,6 +2,7 @@ import copy
 import uuid
 import re
 import json
+from itertools import tee
 import warnings
 import requests
 import time
@@ -166,9 +167,13 @@ class InteractionTester:
         self.start_session(offer)
         success = True
         self._previous_entry_type = None
+        interaction_entries, following_entries = tee(case["interaction"])
+        following_entries = iter(following_entries)
+        next(following_entries, None)
         try:
-            for entry_index, entry in enumerate(case["interaction"]):
+            for entry_index, entry in enumerate(interaction_entries):
                 self._current_entry_index = entry_index
+                self._next_interaction_entry = next(following_entries, None)
                 success = self._run_entry(entry, success)
                 if not success:
                     self._stop_clock()
@@ -222,6 +227,7 @@ class InteractionTester:
         self._request_times = []
         self._stream_start_times = []
         self._stream_end_times = []
+        self._silent_stream_skip_count = 0
 
     def _start_stream_listener(self):
         if self._use_streaming:
@@ -335,15 +341,42 @@ class InteractionTester:
             self._update_session_data()
 
     def _add_streamed_output(self):
-        if self._use_streaming and OUTPUT:
-            try:
-                self._latest_response[OUTPUT][UTTERANCE] = self._stream_listener_thread.system_utterance
-                self._stream_start_times.append(self._stream_listener_thread.streaming_started)
-                self._stream_end_times.append(self._stream_listener_thread.streaming_ended)
-            except KeyError as e:
-                warnings.warn(f"latest response has no '{OUTPUT}' field: {e}")
-            finally:
-                self._stop_stream_listener()
+        if not self._use_streaming:
+            return
+
+        try:
+            output = self._latest_response[OUTPUT]
+        except KeyError as e:
+            warnings.warn(f"latest response has no '{OUTPUT}' field: {e}")
+            self._stream_start_times.append(None)
+            self._stream_end_times.append(None)
+            self._stop_stream_listener()
+            return
+
+        http_utterance = output.get(UTTERANCE)
+        if (http_utterance is None or http_utterance == "") and not self._next_system_entry_expects_speech():
+            self._silent_stream_skip_count += 1
+            self._stream_start_times.append(None)
+            self._stream_end_times.append(None)
+            self._stop_stream_listener()
+            return
+
+        try:
+            output[UTTERANCE] = self._stream_listener_thread.system_utterance
+            self._stream_start_times.append(self._stream_listener_thread.streaming_started)
+            self._stream_end_times.append(self._stream_listener_thread.streaming_ended)
+        except KeyError as e:
+            warnings.warn(f"latest response has no '{OUTPUT}' field: {e}")
+        finally:
+            self._stop_stream_listener()
+
+    def _next_system_entry_expects_speech(self):
+        system_entry = self._next_interaction_entry
+        if system_entry is None:
+            return True
+        if system_entry.get(SPEAKER) != SYSTEM:
+            return True
+        return SPEECH_CONTENT in system_entry
 
     def _request_passivity(self):
         with self._progress.request("passivity"):
@@ -745,13 +778,14 @@ class InteractionTester:
                 response["avg_stream_start"] = sum(onset_times) / len(onset_times)
             except ZeroDivisionError:
                 response["avg_stream_start"] = -1
-                warnings.warn(
-                    "Attempted division by zero when calculating average stream start.\n"
-                    "\tresponse[\"avg_stream_start\"] = sum(onset_times) / len(onset_times)\n"
-                    f"\tonset_times = {onset_times}"
-                    f"\trequest_times = {self._request_times}"
-                    f"\tstream_start_times = {self._stream_start_times}", ZeroDivisionWarning
-                )
+                if self._silent_stream_skip_count < len(self._request_times):
+                    warnings.warn(
+                        "Attempted division by zero when calculating average stream start.\n"
+                        "\tresponse[\"avg_stream_start\"] = sum(onset_times) / len(onset_times)\n"
+                        f"\tonset_times = {onset_times}"
+                        f"\trequest_times = {self._request_times}"
+                        f"\tstream_start_times = {self._stream_start_times}", ZeroDivisionWarning
+                    )
 
             response["max_stream_start"] = max(onset_times) if onset_times else -1
 
@@ -759,13 +793,14 @@ class InteractionTester:
                 response["avg_streaming_time"] = sum(streaming_times) / len(streaming_times)
             except ZeroDivisionError:
                 response["avg_streaming_time"] = -1
-                warnings.warn(
-                    "Attempted division by zero when calculating average stream time.\n"
-                    "\tresponse[\"avg_streaming_time\"] = sum(streaming_times) / len(streaming_times)\n"
-                    f"\tstreaming_times = {streaming_times}"
-                    f"\tstream_start_times = {self._stream_start_times}"
-                    f"\tstream_end_times = {self._stream_end_times}", ZeroDivisionWarning
-                )
+                if self._silent_stream_skip_count < len(self._request_times):
+                    warnings.warn(
+                        "Attempted division by zero when calculating average stream time.\n"
+                        "\tresponse[\"avg_streaming_time\"] = sum(streaming_times) / len(streaming_times)\n"
+                        f"\tstreaming_times = {streaming_times}"
+                        f"\tstream_start_times = {self._stream_start_times}"
+                        f"\tstream_end_times = {self._stream_end_times}", ZeroDivisionWarning
+                    )
             response["max_streaming_time"] = max(streaming_times) if streaming_times else -1
 
         response["avg_turn_time"] = sum(self._turn_times) / len(self._turn_times) if self._turn_times else 0
