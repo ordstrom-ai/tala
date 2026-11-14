@@ -6,8 +6,10 @@ import requests
 from tala.utils.func import getenv
 
 STREAM_CONNECT_TIMEOUT = 5.0
+STREAM_READ_TIMEOUT = 10.0
 STREAM_COMPLETION_TIMEOUT = 10.0
 STREAM_SHUTDOWN_TIMEOUT = 1.0
+STREAM_START_TIMEOUT = STREAM_CONNECT_TIMEOUT + STREAM_READ_TIMEOUT + STREAM_SHUTDOWN_TIMEOUT
 
 
 class StreamListenerError(RuntimeError):
@@ -41,9 +43,7 @@ class StreamListener(threading.Thread):
     def run(self):
         url = f"{self._streamer_url}/{self._session_id}"
         try:
-            with requests.get(
-                url, stream=True, timeout=(STREAM_CONNECT_TIMEOUT, STREAM_COMPLETION_TIMEOUT)
-            ) as response:
+            with requests.get(url, stream=True, timeout=(STREAM_CONNECT_TIMEOUT, STREAM_READ_TIMEOUT)) as response:
                 self._response = response
                 response.raise_for_status()
                 self.stream_started.set()
@@ -75,7 +75,9 @@ class StreamListener(threading.Thread):
                 "stream listener stopped listening, stream closed", received_messages=self._streamed_messages
             )
 
-    def wait_until_started(self, timeout=STREAM_CONNECT_TIMEOUT):
+    def wait_until_started(self, timeout=None):
+        if timeout is None:
+            timeout = STREAM_START_TIMEOUT
         if not self.stream_started.wait(timeout):
             self.stop()
             raise StreamListenerTimeoutError(
