@@ -91,11 +91,10 @@ class TestRequestBudget:
 
 
 class TestFirstGeneratedContent:
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("empty_content", [None, "", " "])
-    async def test_empty_protocol_messages_do_not_satisfy_the_model_deadline(self, empty_content):
+    def test_empty_protocol_messages_do_not_satisfy_the_model_deadline(self, empty_content):
         self.given_a_model_stream_with_no_generated_text(empty_content)
-        await self.when_waiting_for_the_first_content()
+        self.when_waiting_for_the_first_content()
         self.then_the_request_is_cancelled_without_forwarding_output()
 
     def given_a_model_stream_with_no_generated_text(self, empty_content):
@@ -124,13 +123,13 @@ class TestFirstGeneratedContent:
         self.stream = SlowStream()
         self.forwarded = []
 
-    async def when_waiting_for_the_first_content(self):
+    def when_waiting_for_the_first_content(self):
         async def open_stream():
             return self.stream
 
         try:
-            await consume_model_stream(open_stream, self.forwarded.append, first_content_seconds=0.02,
-                                       completion_seconds=1, remaining=lambda: 1)
+            asyncio.run(consume_model_stream(open_stream, self.forwarded.append, first_content_seconds=0.02,
+                                             completion_seconds=1, remaining=lambda: 1))
         except RequestFailure as error:
             self.error = error
 
