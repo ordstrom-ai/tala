@@ -3,9 +3,15 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
-- Interaction testing: make the SSE stream read-idle timeout configurable with
-  `SSE_STREAM_READ_TIMEOUT_SECONDS`, preserving the 10-second default and the
-  separate stream-completion timeout.
+
+## [31.7.0] - 2026-11-17
+- Interaction testing: configure the SSE stream read-idle timeout with
+  `SSE_STREAM_READ_TIMEOUT_SECONDS` (default: 10 seconds); derive the startup
+  wait from it while leaving the separate stream-completion timeout unchanged.
+- DDD: interpret `allow_answer_from_pcom` using XML Schema boolean values
+  (`true`/`1` and `false`/`0`); an absent attribute remains false.
+- Documentation: update the README and package metadata to point to the
+  Engineering Reference documentation.
 
 ## [31.6.0] - 2026-11-17
 - Requestor: add opt-in priority/workload budgets with distinct assignment,
