@@ -177,6 +177,7 @@
         <xs:extension base="has_question">
           <xs:attribute name="allow_answer_from_pcom" type="xs:boolean"/>
           <xs:attribute name="alts_predicate" type="xs:string"/>
+          <xs:attribute name="force" type="xs:boolean"/>
         </xs:extension>
       </xs:complexContent>
     </xs:complexType>

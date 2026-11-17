@@ -3,6 +3,8 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- DDD: support the XML `findout` `force` shorthand to forget a predicate's
+  stored values before asking a predicate-backed wh or yes/no question.
 
 ## [31.7.0] - 2026-11-17
 - Interaction testing: configure the SSE stream read-idle timeout with
