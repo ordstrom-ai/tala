@@ -23,6 +23,12 @@ python -m pytest tala/testing/interaction/test
 ## Configuration
 - `TDM_REQUEST_TIMEOUT_SECONDS`: request timeout for interaction tests and the
   TDM client. Defaults to `120` seconds when unset or invalid.
+- `SSE_STREAM_READ_TIMEOUT_SECONDS`: per-read idle timeout for Tala's SSE
+  `StreamListener`; defaults to 10 seconds. Increase it for a staging trial when
+  deliberately testing slower GPT responses. Its startup wait is derived from
+  the read timeout. It does not alter `STREAM_COMPLETION_TIMEOUT`, any GPT model
+  deadline, or a user's browser/client timeout. SSE comment heartbeats count as
+  received bytes at the HTTP layer and are ignored as application events.
 
 ## Adding tests
 1. Create a new test module under `tala/testing/interaction/test`.

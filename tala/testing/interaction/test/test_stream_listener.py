@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 from unittest.mock import Mock
 
+import pytest
 import structlog
 
 from tala.testing.interaction import stream_listener
@@ -102,6 +103,7 @@ class TestStreamListenerCompletion:
         self.then_stream_started_with_bounded_request_timeouts()
 
     def given_delayed_response_headers(self, monkeypatch):
+        monkeypatch.delenv(stream_listener.STREAM_READ_TIMEOUT_SETTING, raising=False)
         monkeypatch.setattr(stream_listener, "STREAM_CONNECT_TIMEOUT", 0.01)
         monkeypatch.setattr(stream_listener, "STREAM_READ_TIMEOUT", 0.2)
         monkeypatch.setattr(stream_listener, "STREAM_COMPLETION_TIMEOUT", 0.2)
@@ -142,7 +144,7 @@ class TestStreamListenerCompletion:
         assert stream_listener.STREAM_START_TIMEOUT > (
             stream_listener.STREAM_CONNECT_TIMEOUT + stream_listener.STREAM_READ_TIMEOUT
         )
-        assert self._startup_event.wait_timeout == stream_listener.STREAM_START_TIMEOUT
+        assert self._startup_event.wait_timeout == pytest.approx(stream_listener.STREAM_START_TIMEOUT)
         assert self._request.timeout == (stream_listener.STREAM_CONNECT_TIMEOUT, stream_listener.STREAM_READ_TIMEOUT)
         assert not self._listener.is_alive()
 
@@ -228,3 +230,82 @@ class TestStreamListenerCompletion:
     def then_listener_is_closed(self):
         assert self._response.closed.is_set()
         assert not self._listener.is_alive()
+
+
+class TestStreamReadTimeoutConfiguration:
+    def test_default_idle_timeout_preserves_existing_client_behavior(self, monkeypatch):
+        self.given_no_read_timeout_override(monkeypatch)
+        self.when_a_stream_listener_is_created()
+        self.then_default_read_and_start_timeouts_are_preserved()
+
+    def given_no_read_timeout_override(self, monkeypatch):
+        monkeypatch.delenv(stream_listener.STREAM_READ_TIMEOUT_SETTING, raising=False)
+        self._read_timeout = stream_listener.STREAM_READ_TIMEOUT
+
+    def when_a_stream_listener_is_created(self):
+        self._listener = StreamListener("https://example.invalid/events", "test-session", logger)
+
+    def then_default_read_and_start_timeouts_are_preserved(self):
+        assert self._listener._read_timeout == self._read_timeout
+        assert self._listener._start_timeout == (
+            stream_listener.STREAM_CONNECT_TIMEOUT + self._read_timeout + stream_listener.STREAM_SHUTDOWN_TIMEOUT
+        )
+
+    def test_staging_idle_timeout_can_be_raised_without_changing_completion_timeout(self, monkeypatch):
+        self.given_a_longer_read_timeout(monkeypatch, "30")
+        self.when_a_stream_listener_is_created()
+        self.then_only_the_stream_start_and_idle_timeouts_are_increased()
+
+    def given_a_longer_read_timeout(self, monkeypatch, value):
+        monkeypatch.setenv(stream_listener.STREAM_READ_TIMEOUT_SETTING, value)
+
+    def then_only_the_stream_start_and_idle_timeouts_are_increased(self):
+        assert self._listener._read_timeout == 30.0
+        assert self._listener._start_timeout == (
+            stream_listener.STREAM_CONNECT_TIMEOUT + 30.0 + stream_listener.STREAM_SHUTDOWN_TIMEOUT
+        )
+        assert stream_listener.STREAM_COMPLETION_TIMEOUT == 10.0
+
+    def test_listener_passes_configured_idle_timeout_to_the_http_client(self, monkeypatch):
+        self.given_a_controlled_response_and_longer_read_timeout(monkeypatch)
+        self.when_the_sse_listener_runs()
+        self.then_the_configured_read_timeout_reaches_requests()
+
+    def given_a_controlled_response_and_longer_read_timeout(self, monkeypatch):
+        monkeypatch.setenv(stream_listener.STREAM_READ_TIMEOUT_SETTING, "30")
+        self.response = ControlledStreamResponse(send_initial_chunk=True, send_completion=True)
+        self.request_timeout = None
+
+        def open_stream(url, stream, timeout):
+            self.request_timeout = timeout
+            self.response.release_producer.set()
+            return self.response
+
+        monkeypatch.setattr(stream_listener.requests, "get", open_stream)
+        self.listener = StreamListener("https://example.invalid/events", "test-session", logger)
+
+    def when_the_sse_listener_runs(self):
+        self.listener.start()
+        self.listener.join(1.0)
+
+    def then_the_configured_read_timeout_reaches_requests(self):
+        assert not self.listener.is_alive()
+        assert self.request_timeout == (stream_listener.STREAM_CONNECT_TIMEOUT, 30.0)
+        assert self.listener.system_utterance == "Partial delayed menu."
+
+    @pytest.mark.parametrize("value", ["invalid", "nan", "0", "-1"])
+    def test_invalid_read_timeout_configuration_fails_at_listener_creation(self, monkeypatch, value):
+        self.given_a_longer_read_timeout(monkeypatch, value)
+        self.when_invalid_configuration_is_rejected()
+        self.then_the_configuration_error_names_the_setting()
+
+    def when_invalid_configuration_is_rejected(self):
+        self.error = None
+        try:
+            self.when_a_stream_listener_is_created()
+        except ValueError as error:
+            self.error = error
+
+    def then_the_configuration_error_names_the_setting(self):
+        assert self.error is not None
+        assert stream_listener.STREAM_READ_TIMEOUT_SETTING in str(self.error)
