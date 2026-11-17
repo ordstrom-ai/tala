@@ -90,7 +90,7 @@ class XmlCompiler(object):
         return elements[0]
 
     def _parse_boolean(self, string):
-        return string == "true"
+        return string in ("true", "1")
 
     def _parse_integer(self, string):
         return int(string)
@@ -534,7 +534,7 @@ class DomainCompiler(XmlCompiler):
         answer_from_pcom = self._get_optional_attribute(element, "allow_answer_from_pcom")
         if answer_from_pcom is None:
             return False
-        return True
+        return self._parse_boolean(answer_from_pcom)
 
     def _compile_bind_element(self, element):
         question = self._compile_question(element)

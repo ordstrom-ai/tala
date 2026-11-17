@@ -1729,7 +1729,8 @@ class TestPlanItemCompilation(DDDXMLCompilerTestCase):
 
         self._then_findout_allows_pcom(False)
 
-    def test_findout_allows_answer_from_pcom(self):
+    @pytest.mark.parametrize(("value", "expected"), [("true", True), ("false", False), ("1", True), ("0", False)])
+    def test_findout_parses_allow_answer_from_pcom_as_xml_boolean(self, value, expected):
         self._given_compiled_ontology(
             """
 <ontology name="Ontology">
@@ -1738,11 +1739,10 @@ class TestPlanItemCompilation(DDDXMLCompilerTestCase):
         )
 
         self._when_compile_domain_with_plan(
-            """
-<findout type="wh_question" predicate="price" allow_answer_from_pcom="true"/>"""
+            f'<findout type="wh_question" predicate="price" allow_answer_from_pcom="{value}"/>'
         )
 
-        self._then_findout_allows_pcom(True)
+        self._then_findout_allows_pcom(expected)
 
     def test_if_then_else(self):
         self._given_compiled_ontology_for_if_then_tests()
