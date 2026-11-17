@@ -527,8 +527,22 @@ class DomainCompiler(XmlCompiler):
             alts_predicate = self._get_optional_attribute(element, "alts_predicate")
 
         if item_type == "findout":
-            return [plan_item.Findout(self._domain_name, question, answer_from_pcom, alts_predicate)]
+            findout = plan_item.Findout(self._domain_name, question, answer_from_pcom, alts_predicate)
+            if self._parse_boolean(self._get_optional_attribute(element, "force")):
+                predicate = self._predicate_for_forced_findout(question)
+                return [plan_item.Forget(predicate), findout]
+            return [findout]
         return [plan_item.Raise(self._domain_name, question)]
+
+    def _predicate_for_forced_findout(self, question):
+        if not (question.is_wh_question() or question.is_yes_no_question()):
+            raise DDDXMLCompilerException("force requires a predicate-backed wh_question or yn_question")
+        try:
+            return question.predicate
+        except AttributeError as error:
+            raise DDDXMLCompilerException(
+                "force requires a predicate-backed wh_question or yn_question"
+            ) from error
 
     def _get_answer_from_pcom(self, element):
         answer_from_pcom = self._get_optional_attribute(element, "allow_answer_from_pcom")

@@ -1744,6 +1744,83 @@ class TestPlanItemCompilation(DDDXMLCompilerTestCase):
 
         self._then_findout_allows_pcom(expected)
 
+    @pytest.mark.parametrize("force", ["true", "1"])
+    def test_forced_findout_forgets_predicate_before_asking(self, force):
+        self.given_predicate_backed_findout()
+        self.when_compiling_findout_with_force(force)
+        self.then_force_expands_to_forget_then_findout()
+
+    def given_predicate_backed_findout(self):
+        self._given_compiled_ontology(
+            """
+<ontology name="Ontology">
+  <predicate name="price" sort="real"/>
+</ontology>"""
+        )
+
+    def when_compiling_findout_with_force(self, force):
+        self._when_compile_domain_with_plan(
+            f'<findout type="wh_question" predicate="price" force="{force}"/>'
+        )
+
+    def then_force_expands_to_forget_then_findout(self):
+        self._then_result_has_plan(
+            Plan([
+                self._parse("findout(?X.price(X))"),
+                self._parse("forget(price)"),
+            ])
+        )
+
+    def test_forced_yes_no_findout_forgets_predicate_before_asking(self):
+        self.given_boolean_predicate_backed_findout()
+        self.when_compiling_forced_yes_no_findout()
+        self.then_forget_precedes_yes_no_findout()
+
+    def given_boolean_predicate_backed_findout(self):
+        self._given_compiled_ontology(
+            """
+<ontology name="Ontology">
+  <predicate name="need_visa" sort="boolean"/>
+</ontology>"""
+        )
+
+    def when_compiling_forced_yes_no_findout(self):
+        self._when_compile_domain_with_plan('<findout type="yn_question" predicate="need_visa" force="true"/>')
+
+    def then_forget_precedes_yes_no_findout(self):
+        self._then_result_has_plan(
+            Plan([
+                self._parse("findout(?need_visa())"),
+                self._parse("forget(need_visa)"),
+            ])
+        )
+
+    @pytest.mark.parametrize("force", ["false", "0"])
+    def test_unforced_findout_does_not_forget_predicate(self, force):
+        self.given_predicate_backed_findout()
+        self.when_compiling_findout_with_force(force)
+        self.then_plan_contains_only_findout()
+
+    def then_plan_contains_only_findout(self):
+        self._then_result_has_plan(Plan([self._parse("findout(?X.price(X))")]))
+
+    def test_forced_goal_findout_requires_a_predicate(self):
+        self._given_compiled_ontology()
+        self.when_compiling_goal_findout_with_force()
+        self.then_force_rejects_a_question_without_one_predicate()
+
+    def when_compiling_goal_findout_with_force(self):
+        self._error = None
+        try:
+            self._when_compile_domain_with_plan('<findout type="goal" force="true"/>')
+        except DDDXMLCompilerException as error:
+            self._error = error
+
+    def then_force_rejects_a_question_without_one_predicate(self):
+        assert self._error is not None
+        assert "force" in str(self._error)
+        assert "predicate" in str(self._error)
+
     def test_if_then_else(self):
         self._given_compiled_ontology_for_if_then_tests()
         self._when_compile_domain_with_plan(
