@@ -87,7 +87,7 @@ for configuration and a complete example.
 
 ## Documentation and support
 
-- [Platform documentation](https://docs.talkamatic.se)
+- [Platform documentation](https://ordstrom-ai.github.io/engineering-reference/)
 - [Source code](https://github.com/ordstrom-ai/tala)
 - [Issue tracker](https://github.com/ordstrom-ai/tala/issues)
 - [Release history](https://github.com/ordstrom-ai/tala/releases)

@@ -76,8 +76,9 @@
 
 ## Code style guidelines
 
+Follow the shared maintainability and Python conventions in `../AGENTS.md`.
+
 ### Imports
-- Group imports in this order: standard library, third-party, local `tala.*`.
 - Keep one import per line unless a short `from ... import ...` list is clearer.
 - Prefer absolute imports (e.g., `from tala.utils.func import getenv`).
 
@@ -86,27 +87,6 @@
 - YAPF is the formatter; do not reformat with a different tool.
 - Keep dicts and lists readable; existing code often expands large literals.
 - Avoid trailing whitespace and keep blank lines between top-level defs.
-
-### Naming
-- Classes: `CapWords` (e.g., `GPTRequest`).
-- Functions/variables: `snake_case`.
-- Constants: `UPPER_CASE` (module-level defaults/timeouts).
-- Private/internal: prefix with `_` when not part of public API.
-
-### Types
-- The codebase is largely untyped; avoid adding type hints unless helpful
-  and consistent with nearby code.
-- If you add type hints, keep them minimal and local (function args/return).
-
-### Error handling
-- Prefer specific exception types; custom exceptions live near use sites.
-- When interacting with external services, log context and raise meaningful
-  errors (see `tala/utils/requestor.py`).
-- Broad `except Exception` exists in legacy paths; if you touch that code,
-  consider tightening to specific exceptions when safe.
-- Prefer duck-typing over explicit `isinstance` checks in new code.
-- When in doubt, use "ask forgiveness" (EAFP) rather than explicit type
-  checks.
 
 ### Logging
 - Use structured logging via `structlog` (`tala/utils/func.py`).
@@ -122,7 +102,6 @@
 - Tests are in `tala/**/test` or `tala/**/test/**.py`.
 - Use pytest-style `assert` with clear error messages.
 - Prefer small, deterministic tests; patch external calls.
-- Keep tests aligned with the given/when/then helper structure used in this repo.
 
 ### Data and files
 - XML/DDD assets live under `tala/ddd` and are packaged via `pyproject.toml`.
@@ -137,5 +116,5 @@
 - Follow `../AGENTS.md` for platform-wide rules and guarded GitHub workflows.
 
 ## When in doubt
-- Follow existing patterns in nearby files.
-- Keep edits small and focused; avoid broad reformatting.
+- Follow nearby code for package-specific behavior, not as an exception to the
+  shared standards in `../AGENTS.md`.

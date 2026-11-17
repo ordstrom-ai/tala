@@ -33,7 +33,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://www.talkamatic.se"
-Documentation = "https://docs.talkamatic.se"
+Documentation = "https://ordstrom-ai.github.io/engineering-reference/"
 Repository = "https://github.com/ordstrom-ai/tala"
 
 [project.scripts]
