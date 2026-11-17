@@ -3,6 +3,10 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Requestor: add opt-in priority/workload budgets with phase-specific failures,
+  one caller-owned attempt allowance, and cancellable streaming consumption.
+  Timed-out Requestor POSTs are no longer blindly resubmitted; assignment worker
+  failures always signal completion. No live numerical budgets are enabled.
 
 ## [31.5.2] - 2026-11-14
 - Interaction testing: stop waiting for streamed speech when a silent response

@@ -1,10 +1,12 @@
 import uuid
 import json
+import time
 from threading import Event, Thread
 
 import requests
 from tala.utils.func import getenv, setup_logger
 from tala.utils.log_context import correlation_headers, request_id_from_payload as correlation_request_id
+from tala.utils.gpt_budget import BUDGET_PROTOCOL, RequestBudget, RequestFailure, policy_from_environment, run_with_retries
 
 REQUESTOR_URL = getenv("FUNCTION_ENDPOINT_REQUESTOR", "Define the Requestor function endpoint in the environment.")
 REQUESTOR_BASE_URL = getenv(
@@ -121,6 +123,13 @@ def make_request(endpoint, json_request, read_timeout, logger):
                     )
                     response_object.raise_for_status()
                     success = True
+                except requests.ConnectTimeout:
+                    logger.exception(
+                        f"Connection attempt {attempt_no}/{MAX_NUM_CONNECTION_ATTEMPTS} timed out before sending GPT request.",
+                        request_id=request_id_from_payload(json_request),
+                    )
+                except (requests.ReadTimeout, requests.ConnectionError) as error:
+                    raise ConnectionException("Requestor outcome is unknown after a read timeout; not resubmitting.") from error
                 except Exception:
                     response_text = None
                     try:
@@ -187,6 +196,44 @@ def make_request(endpoint, json_request, read_timeout, logger):
         return {}
 
 
+def budgeted_http_request(endpoint, payload, attempt, logger):
+    remaining = attempt["deadline_unix_ms"] / 1000 - time.time()
+    if remaining <= 0:
+        raise RequestFailure("total", "deadline_exceeded", request_id=attempt["request_id"])
+    headers = {"Content-type": "application/json"}
+    headers.update(correlation_headers(logger, request_id=attempt["request_id"]))
+    try:
+        response = requests_session.post(
+            endpoint, json=payload, headers=headers, timeout=(min(CONNECTION_TIMEOUT, remaining), remaining)
+        )
+    except requests.ConnectTimeout as error:
+        raise RequestFailure("transport", "connect_timeout", retryable=True) from error
+    except requests.RequestException as error:
+        raise RequestFailure("transport", "outcome_unknown", request_id=attempt["request_id"],
+                             attempt_id=attempt["attempt_id"]) from error
+    try:
+        result = response.json()
+    except ValueError as error:
+        raise RequestFailure("transport", "invalid_response") from error
+    finally:
+        response.close()
+    if result.get("budget_protocol") != BUDGET_PROTOCOL:
+        raise RequestFailure("protocol", "budget_not_supported")
+    if result["status"] != "success":
+        raise RequestFailure(**result["failure"])
+    return result
+
+
+def assign_deployment_for_attempt(attempt, *, model, messages, max_tokens, logger):
+    payload = {
+        "request_id": attempt["request_id"], "priority": attempt["priority"], "gpt_budget": attempt,
+        "gpt_request": {"model": model, "messages": messages, "max_tokens": max_tokens,
+                        "budget_protocol": BUDGET_PROTOCOL, "max_retries": 0},
+    }
+    result = budgeted_http_request(REQUESTOR_BASE_URL + "/assign-deployment", payload, attempt, logger)
+    return json.loads(result["response_body"])
+
+
 class GPTRequest:
     supports_response_format = True
 
@@ -207,10 +254,20 @@ class GPTRequest:
         reasoning_effort=None,
         read_timeout=None,
         allow_json_repair=True,
-        response_format=None
+        response_format=None,
+        retry_budget=None,
+        workload="interactive",
+        on_retry=None,
     ):
         self.logger = logger if logger else setup_logger(__name__)
-        self._request_id = request_id if request_id else str(uuid.uuid4())
+        self._request_id = retry_budget.request_id if retry_budget is not None else request_id or str(uuid.uuid4())
+        policy = policy_from_environment(priority, workload) if retry_budget is None else retry_budget.policy
+        self.retry_budget = retry_budget
+        if self.retry_budget is None and policy is not None:
+            self.retry_budget = RequestBudget(policy, priority=priority, workload=workload, request_id=self._request_id)
+        self._on_retry = on_retry
+        self._request_failure = None
+        self._request_generation = None
         self.response_format = response_format
         self._requestor_arguments = {
             "gpt_request": {
@@ -245,6 +302,8 @@ class GPTRequest:
 
     @property
     def response(self):
+        if self.retry_budget is not None:
+            return self._budgeted_response()
         try:
             self._done.wait()
             response_body = None
@@ -283,6 +342,8 @@ class GPTRequest:
 
     @property
     def completion_status(self):
+        if self.retry_budget is not None:
+            self._budgeted_response()
         self._done.wait()
         try:
             response_payload = self._response
@@ -298,7 +359,19 @@ class GPTRequest:
         return "error"
 
     @property
+    def request_metrics(self):
+        self.response
+        payload = self._response or {}
+        return {key: payload.get(key) for key in ("request_id", "attempt_id", "deployment", "timings", "status")}
+
+    @property
     def json_response(self):
+        if self.retry_budget is not None:
+            content = self.response
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as error:
+                raise GPTStructuredOutputError(self.request_id) from error
         try:
             return json.loads(self.response)
         except GPTContentFilterError:
@@ -366,6 +439,10 @@ class GPTRequest:
         return self._requestor_arguments["gpt_request"]["messages"][0]
 
     def make(self):
+        if self.retry_budget is not None:
+            self._start_budgeted_request(REQUESTOR_URL)
+            return
+
         def do_request():
             self.logger.info("make GPTRequest", request_id=self._request_id)
             try:
@@ -378,6 +455,55 @@ class GPTRequest:
 
         self.logger.info("Start request thread", request_id=self._request_id)
         Thread(target=do_request, daemon=True).start()
+
+    def _start_budgeted_request(self, endpoint):
+        if self._request_generation is not None and not self._done.is_set():
+            raise RequestFailure("protocol", "request_already_running", request_id=self.request_id)
+        if self._request_failure is not None and not self._request_failure.retryable:
+            raise self._request_failure
+        self._done.clear()
+        self._request_failure = None
+        generation = str(uuid.uuid4())
+        self._request_generation = generation
+
+        def do_request():
+            try:
+                result = run_with_retries(
+                    lambda attempt: self._budgeted_attempt(endpoint, attempt), self.retry_budget, self._on_retry
+                )
+                if generation == self._request_generation:
+                    self._response = result
+            except RequestFailure as error:
+                if generation == self._request_generation:
+                    self._request_failure = error
+            except Exception as error:
+                if generation == self._request_generation:
+                    self._request_failure = RequestFailure("transport", type(error).__name__)
+                self.logger.exception("Budgeted GPT request failed", request_id=self.request_id)
+            finally:
+                if generation == self._request_generation:
+                    self._done.set()
+
+        Thread(target=do_request, daemon=True).start()
+
+    def _budgeted_attempt(self, endpoint, attempt):
+        payload = dict(self._requestor_arguments)
+        payload["gpt_request"] = dict(payload["gpt_request"], max_retries=0, budget_protocol=BUDGET_PROTOCOL)
+        payload["gpt_budget"] = attempt
+        return budgeted_http_request(endpoint, payload, attempt, self.logger)
+
+    def _budgeted_response(self):
+        if not self._done.is_set():
+            try:
+                completed = self._done.wait(self.retry_budget.remaining())
+            except RequestFailure:
+                completed = False
+            if not completed:
+                self._request_generation = None
+                self._request_failure = RequestFailure("transport", "outcome_unknown", request_id=self.request_id)
+        if self._request_failure is not None:
+            raise self._request_failure
+        return self._response["response_body"]
 
     def add_system_message(self, message):
         self._add_message("system", message)
@@ -426,6 +552,10 @@ class GPTRequest:
 
 class GPTRequestForDeploymentAssignment(GPTRequest):
     def make(self):
+        if self.retry_budget is not None:
+            self._start_budgeted_request(REQUESTOR_BASE_URL + "/assign-deployment")
+            return
+
         def do_request():
             self.logger.info("make GPTRequestForDeploymentAssignment", request_id=self._request_id)
             try:
@@ -434,10 +564,11 @@ class GPTRequestForDeploymentAssignment(GPTRequest):
                     self.logger
                 )
                 self.logger.info("received response", request_id=self._request_id, response=self._response)
-            except Exception as e:
-                self.logger.exception()
-                raise e
-            self._done.set()
+            except Exception:
+                self._response = {}
+                self.logger.exception("Deployment assignment failed", request_id=self.request_id)
+            finally:
+                self._done.set()
 
         self.logger.info("Start request thread", request_id=self._request_id)
         Thread(target=do_request, daemon=True).start()
