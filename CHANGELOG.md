@@ -3,10 +3,18 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
-- Requestor: add opt-in priority/workload budgets with phase-specific failures,
-  one caller-owned attempt allowance, and cancellable streaming consumption.
-  Timed-out Requestor POSTs are no longer blindly resubmitted; assignment worker
-  failures always signal completion. No live numerical budgets are enabled.
+
+## [31.6.0] - 2026-11-17
+- Requestor: add opt-in priority/workload budgets with distinct assignment,
+  first-generated-text, completion, and total deadlines; bounded attempts; and
+  phase-aware timing/failure metadata. No numerical live budgets are enabled.
+- Retry safety: do not blindly resubmit Requestor POSTs after read timeouts or
+  connection failures with an unknown outcome; retain retries for safe
+  pre-send connection timeouts. Signal completion for failed deployment-assignment
+  workers so callers cannot wait forever.
+- Streaming: add cancellable asynchronous model-stream consumption that ignores
+  empty protocol messages when measuring time to first generated text and closes
+  timed-out streams, discarding late local output.
 
 ## [31.5.2] - 2026-11-14
 - Interaction testing: stop waiting for streamed speech when a silent response
