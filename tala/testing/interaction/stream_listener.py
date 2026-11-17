@@ -1,5 +1,7 @@
 import threading
 import time
+import math
+import os
 
 import requests
 
@@ -10,6 +12,20 @@ STREAM_READ_TIMEOUT = 10.0
 STREAM_COMPLETION_TIMEOUT = 10.0
 STREAM_SHUTDOWN_TIMEOUT = 1.0
 STREAM_START_TIMEOUT = STREAM_CONNECT_TIMEOUT + STREAM_READ_TIMEOUT + STREAM_SHUTDOWN_TIMEOUT
+STREAM_READ_TIMEOUT_SETTING = "SSE_STREAM_READ_TIMEOUT_SECONDS"
+
+
+def configured_stream_read_timeout():
+    configured = os.environ.get(STREAM_READ_TIMEOUT_SETTING)
+    if not configured:
+        return STREAM_READ_TIMEOUT
+    try:
+        timeout = float(configured)
+    except ValueError as error:
+        raise ValueError(f"{STREAM_READ_TIMEOUT_SETTING} must be a positive finite number.") from error
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"{STREAM_READ_TIMEOUT_SETTING} must be a positive finite number.")
+    return timeout
 
 
 class StreamListenerError(RuntimeError):
@@ -34,6 +50,8 @@ class StreamListener(threading.Thread):
         self._streaming_started = None
         self._streaming_ended = None
         self._logger = logger
+        self._read_timeout = configured_stream_read_timeout()
+        self._start_timeout = STREAM_CONNECT_TIMEOUT + self._read_timeout + STREAM_SHUTDOWN_TIMEOUT
         self._streamed_messages = []
         self._response = None
         self._stream_error = None
@@ -43,11 +61,11 @@ class StreamListener(threading.Thread):
     def run(self):
         url = f"{self._streamer_url}/{self._session_id}"
         try:
-            with requests.get(url, stream=True, timeout=(STREAM_CONNECT_TIMEOUT, STREAM_READ_TIMEOUT)) as response:
+            with requests.get(url, stream=True, timeout=(STREAM_CONNECT_TIMEOUT, self._read_timeout)) as response:
                 self._response = response
                 response.raise_for_status()
                 self.stream_started.set()
-                self._logger.info("listening to stream", url=url)
+                self._logger.info("listening to stream", url=url, read_timeout_seconds=self._read_timeout)
                 if self._please_stop.is_set():
                     return
                 for line in response.iter_lines():
@@ -77,7 +95,7 @@ class StreamListener(threading.Thread):
 
     def wait_until_started(self, timeout=None):
         if timeout is None:
-            timeout = STREAM_START_TIMEOUT
+            timeout = self._start_timeout
         if not self.stream_started.wait(timeout):
             self.stop()
             raise StreamListenerTimeoutError(
