@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import math
 import operator
@@ -68,6 +68,12 @@ class RequestFailure(RuntimeError):
         }
 
 
+class _AttemptCounter:
+    def __init__(self):
+        self.value = 0
+        self.lock = threading.Lock()
+
+
 class RequestBudget:
     def __init__(self, policy, *, priority, workload="interactive", request_id=None,
                  clock=time.monotonic, wall_clock=time.time, sleep=time.sleep):
@@ -80,8 +86,16 @@ class RequestBudget:
         self.wall_clock = wall_clock
         self.sleep = sleep
         self.deadline = clock() + policy.total_seconds
-        self.attempts = 0
-        self._attempt_lock = threading.Lock()
+        self._attempt_counter = _AttemptCounter()
+
+    @property
+    def attempts(self):
+        return self._attempt_counter.value
+
+    @attempts.setter
+    def attempts(self, value):
+        with self._attempt_counter.lock:
+            self._attempt_counter.value = value
 
     def remaining(self):
         remaining = self.deadline - self.clock()
@@ -92,21 +106,23 @@ class RequestBudget:
     def fork_request(self, priority=None):
         request_priority = self.priority if priority is None else priority
         child_policy = policy_from_environment(request_priority, self.workload) or self.policy
+        child_policy = replace(child_policy, max_attempts=min(child_policy.max_attempts, self.policy.max_attempts))
         child = RequestBudget(child_policy, priority=request_priority, workload=self.workload,
                               clock=self.clock, wall_clock=self.wall_clock, sleep=self.sleep)
         child.deadline = min(self.deadline, child.deadline)
         child.correlation_id = self.correlation_id
+        child._attempt_counter = self._attempt_counter
         return child
 
     def begin_attempt(self):
-        with self._attempt_lock:
+        with self._attempt_counter.lock:
             return self._allocate_attempt()
 
     def _allocate_attempt(self):
         remaining = self.remaining()
         if self.attempts >= self.policy.max_attempts:
             raise RequestFailure("total", "attempts_exhausted", request_id=self.request_id)
-        self.attempts += 1
+        self._attempt_counter.value += 1
         return {
             "version": BUDGET_PROTOCOL, "attempt": self.attempts, "attempt_id": str(uuid.uuid4()),
             "request_id": self.request_id, "priority": self.priority, "workload": self.workload,
@@ -143,8 +159,9 @@ class RequestBudget:
 
 
 def run_with_retries(operation, budget, on_retry=None):
+    attempt = budget.begin_attempt()
     while True:
-        attempt = budget.begin_attempt()
+        budget.remaining()
         try:
             result = operation(attempt)
             budget.remaining()
@@ -152,10 +169,25 @@ def run_with_retries(operation, budget, on_retry=None):
         except RequestFailure as failure:
             if not budget.can_retry(failure):
                 raise
+            attempt = _reserve_retry_attempt(budget, failure)
             if on_retry is not None:
                 on_retry(failure)
             if failure.retry_after:
                 budget.sleep(failure.retry_after)
+
+
+def _reserve_retry_attempt(budget, failure):
+    try:
+        return budget.begin_attempt()
+    except RequestFailure as refusal:
+        if refusal.reason == "attempts_exhausted":
+            raise failure
+        refusal.attempt_id = failure.attempt_id
+        refusal.deployment = failure.deployment
+        refusal.timings = dict(failure.timings)
+        if failure.request_id is not None:
+            refusal.request_id = failure.request_id
+        raise refusal from failure
 
 
 def model_failure(error, *, timings=None, deployment=None, request_id=None, attempt_id=None):

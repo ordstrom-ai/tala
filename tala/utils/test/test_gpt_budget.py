@@ -43,6 +43,10 @@ class TestRequestBudget:
         assert len({call["request_id"] for call in self.calls}) == 1
         assert len({call["attempt_id"] for call in self.calls}) == expected_calls
         assert (self.result == "answer") == (expected_calls == 2)
+        if expected_calls == 2:
+            assert self.error is None
+        else:
+            assert self.error is self.failure
 
     def test_a_rate_limit_wait_cannot_extend_the_total_deadline(self):
         self.given_a_policy_and_an_initial_failure(True, 2)
@@ -52,6 +56,45 @@ class TestRequestBudget:
 
     def given_a_retry_wait_longer_than_the_remaining_budget(self):
         self.failure = RequestFailure("model", "rate_limited", retryable=True, retry_after=11)
+
+    def test_a_rate_limit_wait_within_the_deadline_allows_one_bounded_retry(self):
+        self.given_a_budget_with_a_controlled_rate_limit_wait()
+        self.when_the_rate_limited_request_retries()
+        self.then_the_retry_uses_one_remaining_attempt()
+
+    def given_a_budget_with_a_controlled_rate_limit_wait(self):
+        self.now = 0.0
+        self.calls = []
+        self.retry_callbacks = []
+        self.waits = []
+
+        def advance_time(seconds):
+            self.waits.append(seconds)
+            self.now += seconds
+
+        self.budget = RequestBudget(
+            RetryPolicy(1, 1, 1, 10, 2), priority=1, clock=lambda: self.now, sleep=advance_time
+        )
+
+    def when_the_rate_limited_request_retries(self):
+        def request(attempt):
+            self.calls.append(attempt)
+            if len(self.calls) == 1:
+                raise RequestFailure("model", "rate_limited", retryable=True, retry_after=2)
+            return "answer"
+
+        self.result = run_with_retries(request, self.budget, self.retry_callbacks.append)
+
+    def then_the_retry_uses_one_remaining_attempt(self):
+        assert self.result == "answer"
+        assert self.now == 2
+        assert self.waits == [2]
+        assert len(self.calls) == 2
+        assert self.budget.attempts == 2
+        assert len(self.retry_callbacks) == 1
+        assert self.retry_callbacks[0].reason == "rate_limited"
+        assert len({attempt["request_id"] for attempt in self.calls}) == 1
+        assert len({attempt["attempt_id"] for attempt in self.calls}) == 2
 
     def test_missing_profiles_leave_live_budgets_unconfigured(self, monkeypatch):
         self.given_no_priority_profiles(monkeypatch)
@@ -91,13 +134,15 @@ class TestRequestBudget:
 
 
 class TestFirstGeneratedContent:
-    @pytest.mark.parametrize("empty_content", [None, "", " "])
-    def test_empty_protocol_messages_do_not_satisfy_the_model_deadline(self, empty_content):
-        self.given_a_model_stream_with_no_generated_text(empty_content)
+    @pytest.mark.parametrize(
+        "empty_content,role", [(None, None), ("", None), (" ", None), (None, "assistant")]
+    )
+    def test_empty_or_role_only_protocol_messages_do_not_satisfy_the_model_deadline(self, empty_content, role):
+        self.given_a_model_stream_with_no_generated_text(empty_content, role)
         self.when_waiting_for_the_first_content()
         self.then_the_request_is_cancelled_without_forwarding_output()
 
-    def given_a_model_stream_with_no_generated_text(self, empty_content):
+    def given_a_model_stream_with_no_generated_text(self, empty_content, role):
         self.messages = []
         self.closed = False
         self.cancelled = False
@@ -111,7 +156,9 @@ class TestFirstGeneratedContent:
             async def __anext__(self):
                 if not scenario.messages:
                     scenario.messages.append(empty_content)
-                    return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=empty_content))])
+                    return SimpleNamespace(choices=[SimpleNamespace(
+                        delta=SimpleNamespace(content=empty_content, role=role), finish_reason=None,
+                    )])
                 try:
                     await asyncio.Event().wait()
                 finally:

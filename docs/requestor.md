@@ -112,11 +112,33 @@ same `GPTRequest`/budget; that correction consumes the same allowance. A
 nonblocking `on_retry(failure)` callback can enqueue NDU's retry filler before the
 next model attempt. It must not perform network delivery synchronously.
 
+Related local calls created with `RequestBudget.fork_request()` share one atomic
+attempt counter and the original total deadline. A child's priority profile may
+tighten, but cannot expand, the parent's attempt allowance. Forwarded budgets
+include attempts consumed by these children. A retry is reserved before its
+callback is notified, so an exhausted allowance cannot schedule a filler for an
+unallocated attempt. An explicitly supplied budget determines request priority.
+If a competing call takes the final retry slot, the original classified failure
+is propagated unchanged. If reservation instead fails because the total deadline
+expired, the total failure retains the original attempt/deployment/timing context
+and chains the model failure as its cause. Neither refusal invokes the callback.
+
 Direct streaming callers use the same `run_with_retries` budget and async stream
 consumer. They retry only before answer content is forwarded; cancellation closes
 the local connection and late local output is discarded. This does not guarantee
 the provider stops computation or billing. It does not authorize restarting an
 already emitted answer or replaying a whole generation/persistence operation.
+Success requires a `stop` finish reason. Truncation, content filtering, or an
+unfinished stream raises a classified failure even after text has been forwarded;
+trailing usage-only chunks cannot erase the finish reason.
+
+An optional `on_usage(chunk)` observer receives the latest available usage chunk
+once when an attempt finishes, including failed or text-free attempts. This is a
+local capture callback, independent of text forwarding and first-content progress.
+Streamer and Ingestion finalize their existing token-reporting policy once per
+attempt from that captured usage. Report-start failures are logged separately and
+must not restart a model call or replace its completion failure. Missing usage
+does not authorize inventing a new token count; existing success fallbacks remain.
 
 ### Wire protocol and migration
 
