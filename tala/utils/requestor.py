@@ -260,6 +260,7 @@ class GPTRequest:
         on_retry=None,
     ):
         self.logger = logger if logger else setup_logger(__name__)
+        priority = retry_budget.priority if retry_budget is not None else priority
         self._request_id = retry_budget.request_id if retry_budget is not None else request_id or str(uuid.uuid4())
         policy = policy_from_environment(priority, workload) if retry_budget is None else retry_budget.policy
         self.retry_budget = retry_budget
@@ -524,6 +525,8 @@ class GPTRequest:
         self.add_assistant_message(self.text_response)
         self.add_user_message(user_message)
         self._double_max_tokens()
+        if self.retry_budget is not None:
+            self._request_generation = None
         self._done.clear()
         self._response = None
 
