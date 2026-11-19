@@ -3,13 +3,16 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+
+## [31.9.0] - 2026-11-19
 - GPT budgets: share attempt counters across related local calls and forwarded
   workflows, preserve the budget's priority, and allow explicit corrections of
   completed requests without restarting their allowance.
 - Budgeted streaming: preserve finish reasons through trailing usage events and
   reject truncated, filtered, or unfinished completions even after text arrives.
-- Budgeted streaming: expose received usage independently of text and completion
-  validity so failed attempts remain accounted for without duplicate reports.
+- Budgeted streaming: add the optional `on_usage` observer to retain received usage
+  independently of text and completion validity, enabling accounting of failed
+  attempts without duplicate reports.
 - GPT retries: retain the failed attempt's context when concurrent work exhausts
   the retry allowance or its deadline expires before reservation.
 
