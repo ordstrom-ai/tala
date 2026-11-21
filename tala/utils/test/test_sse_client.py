@@ -1,14 +1,15 @@
-import structlog
-import time
+import json
 import queue
-import threading
 import random
+import threading
+import time
 import uuid
 
 import pytest
+import structlog
 
-from tala.utils.sse_client import AbstractSSEClient, SSEClient, ChunkJoiner, StreamerQueue
 from tala.utils.func import configure_stdout_logging, getenv
+from tala.utils.sse_client import AbstractSSEClient, SSEClient, ChunkJoiner, StreamerQueue
 
 logger = structlog.get_logger(__name__)
 log_level = getenv("LOG_LEVEL", default="DEBUG")
@@ -353,3 +354,173 @@ class TestChunkJoiner:
         self.given_joiner()
         self.given_chunks(["Har du några fler frågor?"])
         self.then_resulting_chunks_are(["Har du några fler frågor?"])
+
+
+class TestFirstResponseContentSend:
+    def test_response_stream_logs_first_nonempty_content_before_transport_send(self, monkeypatch):
+        self.given_stream_with_content_role(monkeypatch, "response")
+        self.when_metadata_empty_chunks_and_response_chunks_are_sent()
+        self.then_first_response_send_is_logged_before_content_without_text()
+
+    def given_stream_with_content_role(self, monkeypatch, content_role):
+        self._timeline = []
+        test_timeline = self._timeline
+
+        class RecordingLogger:
+            def __init__(self):
+                self._context = {
+                    "session_id": "test-session",
+                    "request_id": "request-123",
+                    "correlation_id": "correlation-456",
+                }
+                if content_role is not None:
+                    self._context["stream_content_role"] = content_role
+
+            def debug(self, _event, **_fields):
+                pass
+
+            def info(self, event, **fields):
+                test_timeline.append({"kind": "diagnostic", "event": event, **fields})
+
+        class RecordingWebSocket:
+            def __init__(self):
+                self.fail_next_send = False
+
+            def connect(self, _url, timeout=None):
+                pass
+
+            def send(self, message):
+                if self.fail_next_send:
+                    self.fail_next_send = False
+                    test_timeline.append({"kind": "transport_failure", "message": json.loads(message)})
+                    raise OSError("synthetic transport failure")
+                test_timeline.append({"kind": "transport", "message": json.loads(message)})
+
+        self._logger = RecordingLogger()
+        self._websocket = RecordingWebSocket()
+        self._client = SSEClient("test-client", logger, "wss://example.org", 443)
+        monkeypatch.setattr("tala.utils.sse_client.websocket.WebSocket", lambda: self._websocket)
+        self._session_id = "test-session"
+        self._stream = self._client.open_session(
+            self._session_id,
+            logger=self._logger,
+        )
+        self._streamer_session = self._stream.streamer_session
+
+    def when_metadata_empty_chunks_and_response_chunks_are_sent(self):
+        try:
+            self._client.set_persona(self._session_id, "persona")
+            self._client.set_voice(self._session_id, "voice")
+            for content in ("", " \t", "A substantive response.", " Continuation."):
+                self._client._stream_to_frontend(
+                    self._streamer_session,
+                    {
+                        "event": "STREAMING_CHUNK",
+                        "data": content
+                    },
+                )
+        finally:
+            self._streamer_session["chunk_joiner"].last_chunk_sent()
+            self._streamer_session["streamer_thread"].join(timeout=1)
+
+    def then_first_response_send_is_logged_before_content_without_text(self):
+        send_events = [
+            event for event in self._timeline
+            if event["kind"] == "diagnostic" and event["event"] == "first response content transport send started"
+        ]
+        content_send_index = next(
+            index for index, event in enumerate(self._timeline) if event["kind"] == "transport"
+            and event["message"].get("event") == "STREAMING_CHUNK" and event["message"].get("data", "").strip()
+        )
+
+        assert len(send_events) == 1, f"Expected one first-send diagnostic; got {self._timeline!r}"
+        assert self._timeline.index(send_events[0]) < content_send_index
+        assert send_events[0]["content_role"] == "response"
+        assert send_events[0]["session_id"] == self._session_id
+        assert send_events[0]["stream_id"] == self._streamer_session["stream_id"]
+        assert send_events[0]["request_id"] == "request-123"
+        assert send_events[0]["correlation_id"] == "correlation-456"
+        assert "data" not in send_events[0]
+        assert "A substantive response." not in repr(send_events[0])
+
+    @pytest.mark.parametrize("content_role", ["filler", "unclassified"])
+    def test_non_response_stream_does_not_log_response_send(self, monkeypatch, content_role):
+        self.given_stream_with_content_role(monkeypatch, content_role)
+        self.when_metadata_empty_chunks_and_response_chunks_are_sent()
+        self.then_no_response_send_is_logged()
+
+    def test_legacy_stream_without_role_is_not_assumed_to_be_response_content(self, monkeypatch):
+        self.given_stream_with_content_role(monkeypatch, None)
+        self.when_metadata_empty_chunks_and_response_chunks_are_sent()
+        self.then_no_response_send_is_logged()
+
+    def test_transport_send_failure_is_logged_without_content_and_reraised(self, monkeypatch):
+        self.given_stream_with_content_role(monkeypatch, "response")
+        self.when_a_response_send_fails()
+        self.then_the_text_free_failure_is_logged_and_the_error_is_preserved()
+
+    def when_a_response_send_fails(self):
+        self._websocket.fail_next_send = True
+        try:
+            self._client._stream_to_frontend(
+                self._streamer_session,
+                {
+                    "event": "STREAMING_CHUNK",
+                    "data": "Sensitive response text."
+                },
+            )
+        except OSError as error:
+            self._transport_error_type = type(error).__name__
+        finally:
+            self._streamer_session["chunk_joiner"].last_chunk_sent()
+            self._streamer_session["streamer_thread"].join(timeout=1)
+
+    def then_the_text_free_failure_is_logged_and_the_error_is_preserved(self):
+        started_events = [
+            event for event in self._timeline
+            if event["kind"] == "diagnostic" and event["event"] == "first response content transport send started"
+        ]
+        failed_events = [
+            event for event in self._timeline
+            if event["kind"] == "diagnostic" and event["event"] == "first response content transport send failed"
+        ]
+        transport_failure_index = next(
+            index for index, event in enumerate(self._timeline) if event["kind"] == "transport_failure"
+        )
+
+        assert self._transport_error_type == "OSError"
+        assert len(started_events) == 1
+        assert len(failed_events) == 1
+        assert self._timeline.index(started_events[0]) < transport_failure_index
+        assert transport_failure_index < self._timeline.index(failed_events[0])
+        assert failed_events[0]["exception_type"] == "OSError"
+        assert failed_events[0]["stream_id"] == self._streamer_session["stream_id"]
+        assert "data" not in failed_events[0]
+        assert "Sensitive response text." not in repr(failed_events[0])
+
+    def then_no_response_send_is_logged(self):
+        assert not [
+            event for event in self._timeline
+            if event["kind"] == "diagnostic" and event["event"] == "first response content transport send started"
+        ]
+
+
+class TestStreamContentRoleResolution:
+    @pytest.mark.parametrize(
+        "bound_role, expected_role",
+        [("response", "response"), ("filler", "filler"), ("unclassified", "unclassified"),
+         ("unexpected", "unclassified")],
+    )
+    def test_content_role_requires_explicit_known_logger_context(self, bound_role, expected_role):
+        self.given_a_request_logger_with_content_role(bound_role)
+        self.when_the_stream_content_role_is_resolved()
+        self.then_only_a_known_explicit_role_is_retained(expected_role)
+
+    def given_a_request_logger_with_content_role(self, content_role):
+        self._logger = logger.bind(stream_content_role=content_role)
+
+    def when_the_stream_content_role_is_resolved(self):
+        self._resolved_role = AbstractSSEClient._stream_content_role_for_logger(self._logger)
+
+    def then_only_a_known_explicit_role_is_retained(self, expected_role):
+        assert self._resolved_role == expected_role

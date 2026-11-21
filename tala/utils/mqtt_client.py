@@ -54,7 +54,14 @@ class MQTTClient(sse_client.AbstractSSEClient):
             client_id=self.client_id
         )
         self._connected.wait()
-        self._client.publish(self._get_topic(streamer_session), json.dumps(message))
+        payload = json.dumps(message)
+        response_send_started = self._start_first_response_content_send(streamer_session, message, "mqtt")
+        try:
+            self._client.publish(self._get_topic(streamer_session), payload)
+        except Exception as error:
+            if response_send_started:
+                self._log_first_response_content_send_failure(streamer_session, "mqtt", error)
+            raise
 
     def close_session(self, session_id):
         streamer_session = self.sessions[session_id]
