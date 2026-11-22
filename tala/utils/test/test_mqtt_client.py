@@ -56,6 +56,41 @@ class TestMQTTClient:
         self.when_chunk_streamed(chunk)
         self.then_messages_published(chunk)
 
+    def test_response_send_observation_precedes_mqtt_publish(self, monkeypatch):
+        self.given_response_mqtt_stream(monkeypatch)
+        self.when_response_chunk_is_published()
+        self.then_response_send_is_observed_before_publish()
+
+    def given_response_mqtt_stream(self, monkeypatch):
+        self._timeline = []
+        self._client = MQTTClient("test-client", logger, "broker.example.test", 443)
+        self._client._connected.set()
+        self._session_id = "response-session"
+        self._client.open_session(self._session_id, logger=logger.bind(stream_content_role="response"))
+        self._streamer_session = self._client.sessions[self._session_id]
+        monkeypatch.setattr(
+            self._client,
+            "_start_first_response_content_send",
+            lambda *_args: self._timeline.append("response-send-observation") or True,
+        )
+        self._transport.publish.side_effect = lambda *_args: self._timeline.append("mqtt-publish")
+
+    def when_response_chunk_is_published(self):
+        try:
+            self._client._stream_to_frontend(
+                self._streamer_session,
+                {
+                    "event": "STREAMING_CHUNK",
+                    "data": "response"
+                },
+            )
+        finally:
+            self._streamer_session["chunk_joiner"].last_chunk_sent()
+            self._streamer_session["streamer_thread"].join(timeout=1)
+
+    def then_response_send_is_observed_before_publish(self):
+        assert self._timeline == ["response-send-observation", "mqtt-publish"]
+
     def given_mqtt_client_started(self, name, logger, endpoint, port):
         self._client = MQTTClient(name, logger, endpoint, port)
         self._client.start()

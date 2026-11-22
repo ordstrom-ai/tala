@@ -15,9 +15,12 @@ STREAMING_DONE = "STREAMING_DONE"
 STREAMING_SET_PERSONA = "STREAMING_SET_PERSONA"
 STREAMING_SET_VOICE = "STREAMING_SET_VOICE"
 STREAMING_CHUNK = "STREAMING_CHUNK"
+_STREAM_CONTENT_ROLES = ("response", "filler", "unclassified")
+_FIRST_RESPONSE_SEND_EVENT = "first response content transport send started"
 TIMEOUT = 5.0
 PRONUNCIATION_REPLACEMENTS_ENABLED = "PRONUNCIATION_REPLACEMENTS_ENABLED"
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_STREAM_CONTENT_ROLE = "stream_content_role"
 
 
 class SSEClientException(BaseException):
@@ -98,6 +101,8 @@ class AbstractSSEClient:
             "logger": logger,
             "stream_id": str(uuid.uuid4()),
             "correlation": self._correlation_for_logger(logger),
+            "content_role": self._stream_content_role_for_logger(logger),
+            "response_content_send_started": False,
         }
         streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id, streamer_session)
         streamer_session.update(streamer_thread=streamer_thread, chunk_joiner=chunk_joiner)
@@ -111,6 +116,48 @@ class AbstractSSEClient:
             return validated_correlation_context(structlog.get_context(logger))
         except (AttributeError, TypeError):
             return {}
+
+    @staticmethod
+    def _stream_content_role_for_logger(logger):
+        if logger is None:
+            return "unclassified"
+        try:
+            content_role = structlog.get_context(logger).get(_STREAM_CONTENT_ROLE, "unclassified")
+        except (AttributeError, TypeError):
+            return "unclassified"
+        return content_role if content_role in _STREAM_CONTENT_ROLES else "unclassified"
+
+    def _start_first_response_content_send(self, streamer_session, message, transport):
+        if streamer_session["content_role"] != "response" or streamer_session["response_content_send_started"]:
+            return False
+        if message["event"] != STREAMING_CHUNK or not message["data"].strip():
+            return False
+
+        streamer_session["response_content_send_started"] = True
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.info(
+            _FIRST_RESPONSE_SEND_EVENT,
+            **self._response_send_log_fields(streamer_session, transport),
+        )
+        return True
+
+    @staticmethod
+    def _response_send_log_fields(streamer_session, transport):
+        return {
+            "content_role": streamer_session["content_role"],
+            "session_id": streamer_session["session_id"],
+            "stream_id": streamer_session["stream_id"],
+            "transport": transport,
+            **streamer_session["correlation"],
+        }
+
+    def _log_first_response_content_send_failure(self, streamer_session, transport, error):
+        stream_logger = streamer_session.get("logger") or self.logger
+        stream_logger.info(
+            "first response content transport send failed",
+            exception_type=error.__class__.__name__,
+            **self._response_send_log_fields(streamer_session, transport),
+        )
 
     def _streamer_session_for(self, session_id):
         try:
@@ -457,7 +504,14 @@ class SSEClient(AbstractSSEClient):
         if streamer_session.get("correlation"):
             producer_message["stream_id"] = streamer_session["stream_id"]
             producer_message["correlation"] = dict(streamer_session["correlation"])
-        streamer_session["websocket"].send(json.dumps(producer_message))
+        payload = json.dumps(producer_message)
+        response_send_started = self._start_first_response_content_send(streamer_session, message, "sse")
+        try:
+            streamer_session["websocket"].send(payload)
+        except Exception as error:
+            if response_send_started:
+                self._log_first_response_content_send_failure(streamer_session, "sse", error)
+            raise
 
     def close_session(self, session_id):
         streamer_session = self._streamer_session_for(session_id)
