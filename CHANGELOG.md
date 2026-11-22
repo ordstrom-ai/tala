@@ -3,11 +3,15 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
-- SSE/MQTT diagnostics: log a text-free, correlated first response-content send
-  attempt only when the request-scoped stream logger explicitly identifies its
-  content as a response; filler and unclassified streams remain unlabelled.
-  Log synchronous first-send failures by exception type and re-raise the original
-  error. No conversation text or consumer protocol fields are added.
+
+## [31.10.0] - 2026-11-22
+- SSE/MQTT diagnostics: log a text-free, correlated event immediately before the
+  first nonempty response-content send attempt. Emit it only when the request-
+  scoped stream logger explicitly identifies the stream as a response; filler
+  and unclassified streams remain unlabelled. Log synchronous first-send
+  failures by exception type and re-raise the original error. Consumer payloads,
+  chunking, and buffering settings are unchanged; send initiation is not receipt
+  or playback confirmation.
 
 ## [31.9.0] - 2026-11-19
 - GPT budgets: share attempt counters across related local calls and forwarded
