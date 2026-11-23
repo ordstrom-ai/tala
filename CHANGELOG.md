@@ -3,6 +3,8 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+
+## [31.12.0] - 2026-11-23
 - SSE/MQTT diagnostics: include the UTC timestamp of the first nonempty response
   content send attempt in the text-free send summary; it marks local send
   initiation, not broker receipt or playback.
