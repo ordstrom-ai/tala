@@ -4,6 +4,7 @@ import random
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 import structlog
@@ -362,6 +363,11 @@ class TestFirstResponseContentSend:
         self.when_metadata_empty_chunks_and_response_chunks_are_sent()
         self.then_first_response_send_is_logged_before_content_without_text()
 
+    def test_response_send_timestamp_is_preserved_in_text_free_summary(self, monkeypatch):
+        self.given_stream_with_content_role(monkeypatch, "response")
+        self.when_response_chunks_are_sent_and_summary_is_read()
+        self.then_first_response_timestamp_is_shared_by_event_and_summary()
+
     def given_stream_with_content_role(self, monkeypatch, content_role):
         self._timeline = []
         test_timeline = self._timeline
@@ -423,6 +429,10 @@ class TestFirstResponseContentSend:
             self._streamer_session["chunk_joiner"].last_chunk_sent()
             self._streamer_session["streamer_thread"].join(timeout=1)
 
+    def when_response_chunks_are_sent_and_summary_is_read(self):
+        self.when_metadata_empty_chunks_and_response_chunks_are_sent()
+        self._summary = self._client._response_send_summary(self._streamer_session)
+
     def then_first_response_send_is_logged_before_content_without_text(self):
         send_events = [
             event for event in self._timeline
@@ -442,6 +452,20 @@ class TestFirstResponseContentSend:
         assert send_events[0]["correlation_id"] == "correlation-456"
         assert "data" not in send_events[0]
         assert "A substantive response." not in repr(send_events[0])
+
+    def then_first_response_timestamp_is_shared_by_event_and_summary(self):
+        send_events = [
+            event for event in self._timeline
+            if event["kind"] == "diagnostic" and event["event"] == "first response content transport send started"
+        ]
+        timestamp = self._summary["first_response_content_send_started_at"]
+        parsed_timestamp = datetime.fromisoformat(timestamp)
+
+        assert len(send_events) == 1
+        assert send_events[0]["first_response_content_send_started_at"] == timestamp
+        assert parsed_timestamp.tzinfo == timezone.utc
+        assert self._summary["response_content_send_started"] is True
+        assert "A substantive response." not in repr(self._summary)
 
     @pytest.mark.parametrize("content_role", ["filler", "unclassified"])
     def test_non_response_stream_does_not_log_response_send(self, monkeypatch, content_role):
@@ -598,14 +622,19 @@ class TestStreamerQueueResponseSendSummary:
         self._summary = self._queue.response_send_summary
 
     def then_the_summary_contains_only_send_metadata(self, content_role, response_send_started):
+        first_send_timestamp = self._summary["first_response_content_send_started_at"]
         summary_without_stream_id = {field: value for field, value in self._summary.items() if field != "stream_id"}
 
         assert self._summary["stream_id"]
+        assert bool(first_send_timestamp) is response_send_started
+        if response_send_started:
+            assert datetime.fromisoformat(first_send_timestamp).tzinfo == timezone.utc
         assert summary_without_stream_id == {
             "transport": "sse",
             "content_role": content_role,
             "stream_session_opened": True,
             "response_content_send_started": response_send_started,
+            "first_response_content_send_started_at": first_send_timestamp,
             "nonempty_chunks_with_send_call_returned": 1,
             "first_response_send_failure_type": None,
             "streaming_exception_type": None,
@@ -620,6 +649,7 @@ class TestStreamerQueueResponseSendSummary:
             "stream_session_opened": False,
             "stream_id": None,
             "response_content_send_started": False,
+            "first_response_content_send_started_at": None,
             "nonempty_chunks_with_send_call_returned": 0,
             "first_response_send_failure_type": None,
             "streaming_exception_type": None,
