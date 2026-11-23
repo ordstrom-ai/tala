@@ -11,6 +11,7 @@ class MQTTClientException(BaseException):
 
 
 class MQTTClient(sse_client.AbstractSSEClient):
+    transport = "mqtt"
     sessions = {}
 
     def __init__(self, client_id_base, logger, endpoint, port=None):

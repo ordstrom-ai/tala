@@ -46,6 +46,8 @@ class SSEStreamHandle:
 
 
 class AbstractSSEClient:
+    transport = "unknown"
+
     def __init__(self, client_id_base, logger, endpoint, port=None):
         self._setup_logger(logger)
         self._endpoint = endpoint
@@ -103,6 +105,7 @@ class AbstractSSEClient:
             "correlation": self._correlation_for_logger(logger),
             "content_role": self._stream_content_role_for_logger(logger),
             "response_content_send_started": False,
+            "first_response_send_failure_type": None,
         }
         streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id, streamer_session)
         streamer_session.update(streamer_thread=streamer_thread, chunk_joiner=chunk_joiner)
@@ -152,12 +155,31 @@ class AbstractSSEClient:
         }
 
     def _log_first_response_content_send_failure(self, streamer_session, transport, error):
+        streamer_session["first_response_send_failure_type"] = error.__class__.__name__
         stream_logger = streamer_session.get("logger") or self.logger
         stream_logger.info(
             "first response content transport send failed",
             exception_type=error.__class__.__name__,
             **self._response_send_log_fields(streamer_session, transport),
         )
+
+    def _response_send_summary(self, streamer_session):
+        streaming_exception = streamer_session.get("streaming_exception")
+        return {
+            "transport": self.transport,
+            "content_role": streamer_session["content_role"],
+            "stream_session_opened": True,
+            "stream_id": streamer_session["stream_id"],
+            "response_content_send_started": streamer_session["response_content_send_started"],
+            "nonempty_chunks_with_send_call_returned": sum(
+                1 for chunk in streamer_session["streamed"] if chunk.strip()
+            ),
+            "first_response_send_failure_type": streamer_session["first_response_send_failure_type"],
+            "streaming_exception_type": (
+                streaming_exception.__class__.__name__ if streaming_exception is not None else None
+            ),
+            "stream_setup_failure_type": None,
+        }
 
     def _streamer_session_for(self, session_id):
         try:
@@ -437,6 +459,7 @@ class _PassThroughChunkJoiner(ChunkJoiner):
 
 
 class SSEClient(AbstractSSEClient):
+    transport = "sse"
     sessions = {}
 
     def __init__(self, client_id_base, logger, endpoint, port=None):
@@ -549,6 +572,7 @@ class StreamerQueue(threading.Thread):
         self._end_stream = False
         self._default_utterance = default_utterance
         self._logger = logger
+        self._streamer_session = None
         self._streamed_in_session = []
 
     @property
@@ -560,12 +584,41 @@ class StreamerQueue(threading.Thread):
         self.join()
         return self._streamed_in_session
 
+    @property
+    def response_send_summary(self):
+        """Return text-free local send state; successful calls do not prove broker receipt."""
+        self.join()
+        if self._streamer_session is None:
+            return self._response_send_summary_without_open_session()
+        summary = self._sse_client._response_send_summary(self._streamer_session)
+        summary["stream_setup_failure_type"] = self._stream_setup_failure_type()
+        return summary
+
+    def _response_send_summary_without_open_session(self):
+        return {
+            "transport": self._sse_client.transport,
+            "content_role": self._sse_client._stream_content_role_for_logger(self._logger),
+            "stream_session_opened": False,
+            "stream_id": None,
+            "response_content_send_started": False,
+            "nonempty_chunks_with_send_call_returned": 0,
+            "first_response_send_failure_type": None,
+            "streaming_exception_type": None,
+            "stream_setup_failure_type": self._stream_setup_failure_type(),
+        }
+
+    def _stream_setup_failure_type(self):
+        if self._setup_exception is None:
+            return None
+        return self._setup_exception.__class__.__name__
+
     def setup_client(self, pronunciation_model, persona, voice):
         def setup():
             try:
                 self.start()
                 stream = self._sse_client.open_session(self.session_id, pronunciation_model, self._logger)
                 self._stream_target = self.session_id if stream is None else stream
+                self._streamer_session = self._sse_client._streamer_session_for(self._stream_target)
                 self._sse_client.set_persona(self._stream_target, persona)
                 self._sse_client.set_voice(self._stream_target, voice)
             except Exception as exc:

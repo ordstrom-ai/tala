@@ -474,6 +474,7 @@ class TestFirstResponseContentSend:
         finally:
             self._streamer_session["chunk_joiner"].last_chunk_sent()
             self._streamer_session["streamer_thread"].join(timeout=1)
+        self._send_summary = self._client._response_send_summary(self._streamer_session)
 
     def then_the_text_free_failure_is_logged_and_the_error_is_preserved(self):
         started_events = [
@@ -495,6 +496,8 @@ class TestFirstResponseContentSend:
         assert transport_failure_index < self._timeline.index(failed_events[0])
         assert failed_events[0]["exception_type"] == "OSError"
         assert failed_events[0]["stream_id"] == self._streamer_session["stream_id"]
+        assert self._streamer_session["first_response_send_failure_type"] == "OSError"
+        assert self._send_summary["first_response_send_failure_type"] == "OSError"
         assert "data" not in failed_events[0]
         assert "Sensitive response text." not in repr(failed_events[0])
 
@@ -524,3 +527,101 @@ class TestStreamContentRoleResolution:
 
     def then_only_a_known_explicit_role_is_retained(self, expected_role):
         assert self._resolved_role == expected_role
+
+
+class TestStreamerQueueResponseSendSummary:
+    @pytest.mark.parametrize(
+        "content_role, response_send_started",
+        [("response", True), ("filler", False), ("unclassified", False)],
+    )
+    def test_completed_queue_exposes_text_free_send_summary(self, monkeypatch, content_role, response_send_started):
+        self.given_a_stream_queue(monkeypatch, content_role)
+        self.when_response_content_is_sent()
+        self.then_the_summary_contains_only_send_metadata(content_role, response_send_started)
+
+    def test_unopened_stream_summary_reports_only_setup_error_metadata(self, monkeypatch):
+        self.given_a_stream_queue_with_failing_websocket(monkeypatch)
+        self.when_stream_session_setup_fails()
+        self.then_the_summary_reports_a_text_free_setup_failure()
+
+    def given_a_stream_queue(self, monkeypatch, content_role):
+        monkeypatch.setenv("PRONUNCIATION_REPLACEMENTS_ENABLED", "false")
+
+        class RecordingWebSocket:
+            def connect(self, _url, timeout=None):
+                pass
+
+            def send(self, _message):
+                pass
+
+            def close(self):
+                pass
+
+        self._client = SSEClient("summary-test", logger, "wss://example.org", 443)
+        monkeypatch.setattr("tala.utils.sse_client.websocket.WebSocket", RecordingWebSocket)
+        self._queue = StreamerQueue(
+            self._client,
+            "summary-session",
+            "",
+            logger.bind(stream_content_role=content_role, request_id="summary-request"),
+        )
+
+    def given_a_stream_queue_with_failing_websocket(self, monkeypatch):
+        class FailingWebSocket:
+            def connect(self, _url, timeout=None):
+                raise OSError("synthetic connection failure")
+
+            def close(self):
+                pass
+
+        self._client = SSEClient("summary-test", logger, "wss://example.org", 443)
+        monkeypatch.setattr("tala.utils.sse_client.websocket.WebSocket", FailingWebSocket)
+        self._queue = StreamerQueue(
+            self._client,
+            "summary-session",
+            "",
+            logger.bind(stream_content_role="response", request_id="summary-request"),
+        )
+
+    def when_response_content_is_sent(self):
+        self._queue.setup_client({}, None, None)
+        self._queue.enqueue("Private response text.")
+        self._queue.please_stop(end_stream=True)
+        self._queue._setup_done.wait(timeout=1)
+        self._queue.join()
+        self._summary = self._queue.response_send_summary
+
+    def when_stream_session_setup_fails(self):
+        self._queue.setup_client({}, None, None)
+        self._queue._setup_done.wait(timeout=1)
+        self._queue.join()
+        self._summary = self._queue.response_send_summary
+
+    def then_the_summary_contains_only_send_metadata(self, content_role, response_send_started):
+        summary_without_stream_id = {field: value for field, value in self._summary.items() if field != "stream_id"}
+
+        assert self._summary["stream_id"]
+        assert summary_without_stream_id == {
+            "transport": "sse",
+            "content_role": content_role,
+            "stream_session_opened": True,
+            "response_content_send_started": response_send_started,
+            "nonempty_chunks_with_send_call_returned": 1,
+            "first_response_send_failure_type": None,
+            "streaming_exception_type": None,
+            "stream_setup_failure_type": None,
+        }
+        assert "Private response text." not in repr(self._summary)
+
+    def then_the_summary_reports_a_text_free_setup_failure(self):
+        assert self._summary == {
+            "transport": "sse",
+            "content_role": "response",
+            "stream_session_opened": False,
+            "stream_id": None,
+            "response_content_send_started": False,
+            "nonempty_chunks_with_send_call_returned": 0,
+            "first_response_send_failure_type": None,
+            "streaming_exception_type": None,
+            "stream_setup_failure_type": "OSError",
+        }
