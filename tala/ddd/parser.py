@@ -274,6 +274,7 @@ class _RecursiveDescentParser:
             "jumpto",
             "forget",
             "forget_shared",
+            "forget_instructional_plan",
             "assume",
             "assume_shared",
             "assume_issue",
@@ -422,6 +423,19 @@ class _RecursiveDescentParser:
         if plan_type in ["findout", "raise", "bind", "respond"]:
             question = self._parse_question_expression()
             content = question
+        elif plan_type == "forget_instructional_plan":
+            action = self._parse_action_expression()
+            self._stream.consume_symbol(",")
+            params = self._parse_curly_params()
+            if set(params) != {"include_children"}:
+                raise ParseFailure()
+            content = _AstNode(
+                "forget_instructional_plan",
+                {
+                    "action": action,
+                    "include_children": params["include_children"]
+                },
+            )
         elif plan_type in ["forget", "forget_shared", "assume", "assume_shared"]:
             content = self._parse_expression()
         elif plan_type == "assume_issue":
@@ -974,6 +988,10 @@ class _AstBuilder:
         content = value.get("content")
         if plan_type == "forget_all":
             return plan_item.ForgetAll()
+        if plan_type == "forget_instructional_plan":
+            action = self.build(content.value["action"])
+            include_children = self._parser._parse_boolean(content.value["include_children"])
+            return plan_item.ForgetInstructionalPlan(action, include_children)
         if plan_type == "findout":
             return plan_item.Findout(self._parser.domain_name, self.build(content))
         if plan_type == "raise":

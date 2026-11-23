@@ -481,6 +481,8 @@ class DomainCompiler(XmlCompiler):
             return self._compile_forget_shared_element(element)
         elif element.localName == "forget_all":
             return [plan_item.ForgetAll()]
+        elif element.localName == "forget_instructional_plan":
+            return self._compile_forget_instructional_plan_element(element)
         elif element.localName == "invoke_service_query":
             return self._compile_invoke_service_query_element(element)
         elif element.localName == "invoke_domain_query":
@@ -598,6 +600,12 @@ class DomainCompiler(XmlCompiler):
         else:
             proposition = self._compile_proposition_child_of(element)
             return [plan_item.ForgetShared(proposition)]
+
+    def _compile_forget_instructional_plan_element(self, element):
+        action_name = self._get_mandatory_attribute(element, "action")
+        include_children = self._parse_boolean(self._get_mandatory_attribute(element, "include_children"))
+        action = Action(action_name, self._ontology.name)
+        return [plan_item.ForgetInstructionalPlan(action, include_children)]
 
     def _compile_invoke_service_query_element(self, element):
         question = self._compile_question(element)
