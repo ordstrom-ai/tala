@@ -144,6 +144,12 @@
       <xs:element name="forget" type="forget_proposition" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="forget_shared" type="forget_proposition" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="forget_all" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="forget_instructional_plan" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="action" type="xs:string" use="required"/>
+          <xs:attribute name="include_children" type="xs:boolean" use="required"/>
+        </xs:complexType>
+      </xs:element>
       <xs:element ref="log" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="greet" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="invoke_service_query" minOccurs="0" maxOccurs="unbounded"/>

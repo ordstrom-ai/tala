@@ -538,6 +538,7 @@
         {"$ref": "#/$defs/forget"},
         {"$ref": "#/$defs/forget_shared"},
         {"$ref": "#/$defs/forget_all"},
+        {"$ref": "#/$defs/forget_instructional_plan"},
         {"$ref": "#/$defs/invoke_service_query"},
         {"$ref": "#/$defs/invoke_domain_query"},
         {"$ref": "#/$defs/iterate"},
@@ -652,6 +653,22 @@
       "properties": {
         "forget_all": {
           "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "forget_instructional_plan": {
+      "type": "object",
+      "required": ["forget_instructional_plan"],
+      "properties": {
+        "forget_instructional_plan": {
+          "type": "object",
+          "required": ["action", "include_children"],
+          "properties": {
+            "action": {"type": "string"},
+            "include_children": {"type": "boolean"}
+          },
           "additionalProperties": false
         }
       },

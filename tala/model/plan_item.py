@@ -31,6 +31,7 @@ TYPE_EMIT_ICM = "emit_icm"
 TYPE_JUMPTO = "jumpto"
 TYPE_IF_THEN_ELSE = "if_then_else"
 TYPE_FORGET_ALL = "forget_all"
+TYPE_FORGET_INSTRUCTIONAL_PLAN = "forget_instructional_plan"
 TYPE_FORGET = "forget"
 TYPE_FORGET_SHARED = "forget_shared"
 TYPE_FORGET_ISSUE = "forget_issue"
@@ -72,6 +73,7 @@ ALL_PLAN_ITEM_TYPES = [
     TYPE_JUMPTO,
     TYPE_IF_THEN_ELSE,
     TYPE_FORGET_ALL,
+    TYPE_FORGET_INSTRUCTIONAL_PLAN,
     TYPE_FORGET,
     TYPE_FORGET_SHARED,
     TYPE_FORGET_ISSUE,
@@ -518,6 +520,68 @@ class ForgetAll(PlanItem):
 
     def __init__(self):
         PlanItem.__init__(self, TYPE_FORGET_ALL)
+
+
+class ForgetInstructionalPlan(PlanItem):
+    @classmethod
+    def create_from_json_api_data(cls, data, included):
+        action_entry = included.get_object_from_relationship(data["relationships"]["action"]["data"])
+        action = Action.create_from_json_api_data(action_entry, included)
+        include_children = data["attributes"]["include_children"]
+        return cls(action, include_children)
+
+    def __init__(self, action, include_children):
+        if not action.is_action():
+            raise ValueError("forget_instructional_plan requires an action")
+        if include_children is not True and include_children is not False:
+            raise ValueError("forget_instructional_plan include_children must be a boolean")
+        PlanItem.__init__(self, TYPE_FORGET_INSTRUCTIONAL_PLAN)
+        self._action = action
+        self._include_children = include_children
+
+    @property
+    def action(self):
+        return self._action
+
+    @property
+    def include_children(self):
+        return self._include_children
+
+    def __eq__(self, other):
+        try:
+            return (
+                other.is_plan_item() and self.type_ == other.type_ and self.action == other.action
+                and self.include_children == other.include_children
+            )
+        except AttributeError:
+            return False
+
+    def __hash__(self):
+        return hash((self.__class__.__name__, self.type_, self.action, self.include_children))
+
+    def __str__(self):
+        include_children = str(self.include_children).lower()
+        return f"forget_instructional_plan({self.action.name},{{include_children={include_children}}})"
+
+    def as_dict(self):
+        return {
+            self.type_: {
+                "action": self.action,
+                "include_children": self.include_children,
+            }
+        }
+
+    @property
+    def json_api_id(self):
+        return f"{self.json_api_type}:{self.action.json_api_id}:{self.include_children}"
+
+    @property
+    def json_api_attributes(self):
+        return ["include_children"]
+
+    @property
+    def json_api_relationships(self):
+        return ["action"]
 
 
 class Forget(PlanItemWithSemanticContent):

@@ -600,6 +600,8 @@ class NonCheckingJSONParser():
             return self.parse_forget_shared_plan_item(data[plan_item.TYPE_FORGET_SHARED])
         if plan_item.TYPE_FORGET_ALL in data:
             return self.parse_forget_all_plan_item(data[plan_item.TYPE_FORGET_ALL])
+        if plan_item.TYPE_FORGET_INSTRUCTIONAL_PLAN in data:
+            return self.parse_forget_instructional_plan(data[plan_item.TYPE_FORGET_INSTRUCTIONAL_PLAN])
         if plan_item.TYPE_FORGET_ISSUE in data:
             return self.parse_forget_issue_plan_item(data[plan_item.TYPE_FORGET_ISSUE])
         if plan_item.TYPE_IF_THEN_ELSE in data:
@@ -745,6 +747,10 @@ class NonCheckingJSONParser():
 
     def parse_forget_all_plan_item(self, _data):
         return plan_item.ForgetAll()
+
+    def parse_forget_instructional_plan(self, data):
+        action = self.parse_action(data["action"])
+        return plan_item.ForgetInstructionalPlan(action, data["include_children"])
 
     def parse_forget_issue_plan_item(self, data):
         question = self.parse_question(data)

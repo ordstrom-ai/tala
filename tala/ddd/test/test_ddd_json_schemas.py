@@ -93,6 +93,46 @@ def test_domain_schema_accepts_kpq_question_used_by_compiler(schemas_and_registr
         validator.validate(domain)
 
 
+class TestForgetInstructionalPlanSchema:
+    @pytest.mark.parametrize("include_children", [True, False])
+    def test_domain_schema_accepts_child_scope(self, schemas_and_registry, include_children):
+        self.given_a_forget_instructional_plan_document(schemas_and_registry, include_children)
+        self.when_the_domain_schema_validates_the_document()
+        self.then_validation_succeeds()
+
+    def given_a_forget_instructional_plan_document(self, schemas_and_registry, include_children):
+        schemas, registry = schemas_and_registry
+        self._validator = Draft202012Validator(schemas["domain.schema.json"], registry=registry)
+        self._document = {
+            "domain": {
+                "name": "Domain",
+                "plans": [{
+                    "goal": {
+                        "perform": {
+                            "action": "procedure"
+                        }
+                    },
+                    "content": [{
+                        "forget_instructional_plan": {
+                            "action": "procedure",
+                            "include_children": include_children,
+                        }
+                    }],
+                }],
+            }
+        }
+
+    def when_the_domain_schema_validates_the_document(self):
+        self._error = None
+        try:
+            self._validator.validate(self._document)
+        except ValidationError as error:
+            self._error = error
+
+    def then_validation_succeeds(self):
+        assert self._error is None, self._error
+
+
 def test_domain_schema_accepts_boolean_conditions_and_predicate_only_forget(schemas_and_registry):
     schemas, registry = schemas_and_registry
     domain = {

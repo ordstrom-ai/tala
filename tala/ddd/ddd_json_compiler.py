@@ -282,6 +282,9 @@ class DDDJSONCompiler(object):
                 self._apply_forget_payload(doc, element, payload)
             elif item_type == "forget_all":
                 pass
+            elif item_type == "forget_instructional_plan":
+                element.setAttribute("action", payload["action"])
+                element.setAttribute("include_children", self._stringify(payload["include_children"]))
             elif item_type in ["invoke_service_query", "invoke_domain_query", "reset_domain_query"]:
                 self._apply_question_attributes(doc, element, payload["question"])
                 if item_type == "invoke_service_query":

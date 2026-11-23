@@ -4,6 +4,10 @@ record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
 
+## [31.13.0] - 2026-11-23
+- DDD: add `forget_instructional_plan` with an explicit child-plan reset scope.
+  DME support is required for generated DDDs that use this operation.
+
 ## [31.12.0] - 2026-11-23
 - SSE/MQTT diagnostics: include the UTC timestamp of the first nonempty response
   content send attempt in the text-free send summary; it marks local send
