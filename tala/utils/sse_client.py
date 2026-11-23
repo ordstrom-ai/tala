@@ -4,6 +4,7 @@ import os
 import queue
 import threading
 import uuid
+from datetime import datetime, timezone
 
 import websocket
 import requests
@@ -105,6 +106,7 @@ class AbstractSSEClient:
             "correlation": self._correlation_for_logger(logger),
             "content_role": self._stream_content_role_for_logger(logger),
             "response_content_send_started": False,
+            "first_response_content_send_started_at": None,
             "first_response_send_failure_type": None,
         }
         streamer_thread, chunk_joiner = self._prepare_streamer_thread(session_id, streamer_session)
@@ -136,6 +138,7 @@ class AbstractSSEClient:
         if message["event"] != STREAMING_CHUNK or not message["data"].strip():
             return False
 
+        streamer_session["first_response_content_send_started_at"] = datetime.now(timezone.utc).isoformat()
         streamer_session["response_content_send_started"] = True
         stream_logger = streamer_session.get("logger") or self.logger
         stream_logger.info(
@@ -151,6 +154,7 @@ class AbstractSSEClient:
             "session_id": streamer_session["session_id"],
             "stream_id": streamer_session["stream_id"],
             "transport": transport,
+            "first_response_content_send_started_at": streamer_session["first_response_content_send_started_at"],
             **streamer_session["correlation"],
         }
 
@@ -171,6 +175,7 @@ class AbstractSSEClient:
             "stream_session_opened": True,
             "stream_id": streamer_session["stream_id"],
             "response_content_send_started": streamer_session["response_content_send_started"],
+            "first_response_content_send_started_at": streamer_session["first_response_content_send_started_at"],
             "nonempty_chunks_with_send_call_returned": sum(
                 1 for chunk in streamer_session["streamed"] if chunk.strip()
             ),
@@ -601,6 +606,7 @@ class StreamerQueue(threading.Thread):
             "stream_session_opened": False,
             "stream_id": None,
             "response_content_send_started": False,
+            "first_response_content_send_started_at": None,
             "nonempty_chunks_with_send_call_returned": 0,
             "first_response_send_failure_type": None,
             "streaming_exception_type": None,
