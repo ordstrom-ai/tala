@@ -3,6 +3,10 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- SSE/MQTT diagnostics: expose text-free stream send summaries with content
+  role, transport, stream ID, nonempty chunks whose local send call returned,
+  and setup/send failure types. Local send-call completion does not confirm
+  broker receipt or playback.
 
 ## [31.10.0] - 2026-11-22
 - SSE/MQTT diagnostics: log a text-free, correlated event immediately before the

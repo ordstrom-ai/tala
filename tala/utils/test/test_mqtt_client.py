@@ -29,6 +29,11 @@ class TestMQTTClient:
         self.when_mqtt_client_created()
         self.then_client_created_with(logger, "some_endpoint", 443, "name_base")
 
+    def test_client_summary_identifies_mqtt_transport(self):
+        self.given_args_for_client_creation(["", logger, "some_endpoint", 443])
+        self.when_mqtt_client_created()
+        self.then_transport_is_identified_as_mqtt()
+
     def given_args_for_client_creation(self, args):
         self._mqtt_args = args
 
@@ -39,6 +44,9 @@ class TestMQTTClient:
         assert self._mqtt_client.logger == logger
         assert self._mqtt_client._endpoint == endpoint
         assert self._mqtt_client._port == port
+
+    def then_transport_is_identified_as_mqtt(self):
+        assert self._mqtt_client.transport == "mqtt"
 
     def test_creation_with_client_id(self):
         self.given_args_for_client_creation(["client_id", logger, "some_endpoint", 443])
