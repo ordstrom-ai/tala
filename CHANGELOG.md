@@ -3,10 +3,12 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
-- SSE/MQTT diagnostics: expose text-free stream send summaries with content
-  role, transport, stream ID, nonempty chunks whose local send call returned,
-  and setup/send failure types. Local send-call completion does not confirm
-  broker receipt or playback.
+
+## [31.11.0] - 2026-11-23
+- SSE/MQTT diagnostics: expose `StreamerQueue.response_send_summary`, a
+  text-free summary of content role, transport, stream ID, first response-send
+  state, nonempty chunks whose local send call returned, and exception types.
+  Returned local calls do not confirm broker receipt or playback.
 
 ## [31.10.0] - 2026-11-22
 - SSE/MQTT diagnostics: log a text-free, correlated event immediately before the
