@@ -57,6 +57,10 @@
           "type": "array",
           "items": {"$ref": "#/$defs/plan_item"}
         },
+        "on_completion": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/plan_item"}
+        },
         "preferred": {"$ref": "#/$defs/preferred"},
         "accommodate_without_feedback": {"type": "boolean"},
         "restart_on_completion": {"type": "boolean"},
@@ -546,6 +550,7 @@
         {"$ref": "#/$defs/invoke_service_action"},
         {"$ref": "#/$defs/get_done"},
         {"$ref": "#/$defs/jumpto"},
+        {"$ref": "#/$defs/replace_goal"},
         {"$ref": "#/$defs/assume_shared"},
         {"$ref": "#/$defs/assume_issue"},
         {"$ref": "#/$defs/assume_system_belief"},
@@ -766,6 +771,21 @@
       "required": ["jumpto"],
       "properties": {
         "jumpto": {
+          "type": "object",
+          "required": ["goal"],
+          "properties": {
+            "goal": {"$ref": "#/$defs/goal"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "replace_goal": {
+      "type": "object",
+      "required": ["replace_goal"],
+      "properties": {
+        "replace_goal": {
           "type": "object",
           "required": ["goal"],
           "properties": {

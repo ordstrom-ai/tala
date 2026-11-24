@@ -272,6 +272,7 @@ class _RecursiveDescentParser:
             "bind",
             "respond",
             "jumpto",
+            "replace_goal",
             "forget",
             "forget_shared",
             "forget_instructional_plan",
@@ -463,7 +464,7 @@ class _RecursiveDescentParser:
             content = self._parse_signal_action_failure()
         elif plan_type == "log":
             content = self._parse_string_literal()
-        elif plan_type == "jumpto":
+        elif plan_type in ["jumpto", "replace_goal"]:
             content = self._parse_goal_expression()
         else:
             raise ParseFailure()
@@ -1052,6 +1053,8 @@ class _AstBuilder:
             return plan_item.Log(self._parser._strip_quotes(content))
         if plan_type == "jumpto":
             return plan_item.JumpTo(self.build(content))
+        if plan_type == "replace_goal":
+            return plan_item.ReplaceGoal(self.build(content))
         if plan_type == "if":
             condition = self.build(value["condition"])
             if hasattr(condition, "is_proposition") and condition.is_proposition():

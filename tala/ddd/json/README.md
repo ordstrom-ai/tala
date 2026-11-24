@@ -46,7 +46,11 @@ The JSON design below matches what TDM executes today and intentionally
 excludes unsupported constructs. In particular:
 
 - No pre-plans anywhere.
-- Postplans are only allowed for resolve goals.
+- Postplans are supported for perform and resolve goals where the runtime
+  retirement path executes them; not every removal path runs a postplan.
+- `on_completion` is supported for non-restarting perform goals other than the
+  built-in `top` and `up` goals.
+- `replace_goal` is supported in a perform goal's main plan, not in postplans.
 - Only the plan items listed below are valid.
 
 ### Domain
@@ -150,6 +154,33 @@ Goal attributes (optional, TDM-supported):
 - `superactions`: list of action names
 - `downdate_conditions`: list of condition objects
 - `postplan`: list of plan items
+- `on_completion`: list of plan items run after committed successful completion
+
+For example, use a replacement as the final content item and retain cleanup in
+the source postplan:
+
+```json
+{
+  "goal": {"perform": {"action": "collect_details"}},
+  "content": [
+    {"findout": {"question": {"wh": {"predicate": "customer_details"}}}},
+    {"replace_goal": {"goal": {"perform": {"action": "review_details"}}}}
+  ],
+  "postplan": [{"forget": {"predicate": "temporary_details"}}]
+}
+```
+
+An independent successful-completion handler can be declared as:
+
+```json
+{
+  "goal": {"perform": {"action": "collect_details"}},
+  "content": [{"signal_action_completion": {"postconfirm": false}}],
+  "on_completion": [
+    {"jumpto": {"goal": {"perform": {"action": "review_details"}}}}
+  ]
+}
+```
 
 ### Questions
 
@@ -192,9 +223,11 @@ Each condition is a single-key object:
 {"is_shared_commitment": {"service_action_terminated": {"name": "BookHousing"}}}
 ```
 
-### Plan items (allowed in `content` / `postplan`)
+### Plan items
 
-Each plan item is a single-key object. Supported items (as used in TDM DDDs):
+Each plan item is a single-key object. Most listed items can appear in a goal's
+`content` or `postplan`. `replace_goal` is restricted to a perform goal's main
+`content` plan.
 
 ```json
 {"findout": {"question": {"wh": {"predicate": "dest_city"}}, "allow_answer_from_pcom": true}}
@@ -212,6 +245,7 @@ Each plan item is a single-key object. Supported items (as used in TDM DDDs):
 {"invoke_service_action": {"name": "SetTime", "preconfirm": "assertive", "postconfirm": true, "downdate_plan": true}}
 {"get_done": {"action": "SetTime", "step": "1"}}
 {"jumpto": {"goal": {"perform": {"action": "top"}}}}
+{"replace_goal": {"goal": {"perform": {"action": "review_details"}}}}
 {"assume_shared": {"proposition": {"predicate": "dest_city", "value": "paris"}}}
 {"assume_issue": {"question": {"wh": {"predicate": "dest_city"}}, "insist": true}}
 {"assume_system_belief": {"proposition": {"predicate": "dest_city", "value": "paris"}}}
@@ -223,6 +257,13 @@ Each plan item is a single-key object. Supported items (as used in TDM DDDs):
 {"reset_domain_query": {"question": {"wh": {"predicate": "price"}}}}
 {"greet": {}}
 ```
+
+`replace_goal` belongs in a perform goal's `content` plan and adopts a target
+perform goal after the source postplan runs. Its postplan must not redirect,
+start a separate goal, change DDD, or signal action completion/failure.
+`on_completion` is a separate goal attribute: it runs only after a committed
+successful action status, after any postplan. Replacing a goal does not run its
+completion hook.
 
 Note: `downdate_plan` on `invoke_service_action` is deprecated and does not
 trigger implicit downdating. Use explicit `downdate_conditions` instead.
@@ -309,6 +350,12 @@ Strict schemas for the JSON format live under:
 ```
 
 ## Authoring principles
+
+The schema validates document shape; context-sensitive lifecycle checks are
+performed by the Tala compiler. For example, compiler validation checks that a
+`replace_goal` target is declared and is not the source goal, and restricts
+`on_completion` to eligible perform goals.
+
 - Avoid XML-style attribute bags. Use explicit objects.
 - Prefer arrays for ordering (`content`, `then`, `else`).
 - Prefer nested keys for intent (`goal.perform`, `goal.resolve`).

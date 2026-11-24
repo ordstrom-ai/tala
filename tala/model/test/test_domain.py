@@ -15,6 +15,7 @@ from tala.model.question import WhQuestion, AltQuestion, KnowledgePreconditionQu
 from tala.model.sort import CustomSort, RealSort
 from tala.testing.lib_test_case import LibTestCase
 from tala.ddd.json_parser import JSONDomainParser
+from tala.utils import json_api
 
 
 class DomainTests(LibTestCase):
@@ -136,6 +137,42 @@ class DomainTests(LibTestCase):
         self.domain = json_parser.parse(domain_as_json)
 
         self.empty_domain = Domain(self.DDD_NAME, "empty_domain", self.empty_ontology)
+
+    def test_on_completion_plan_survives_domain_json_round_trip(self):
+        self.given_a_domain_with_an_on_completion_plan()
+        self.when_the_domain_is_serialized_and_parsed()
+        self.then_the_completion_plan_is_available()
+
+    def given_a_domain_with_an_on_completion_plan(self):
+        self.expected_completion_plan = [Findout(self.domain_name, self.price_question)]
+        self.domain_with_completion = Domain(
+            self.DDD_NAME,
+            self.domain_name,
+            self.ontology,
+            plans=[{
+                "goal": PerformGoal(self.buy_action),
+                "plan": Plan([]),
+                "on_completion": self.expected_completion_plan,
+            }],
+        )
+
+    def when_the_domain_is_serialized_and_parsed(self):
+        domain_json = self.domain_with_completion.as_json()
+        self.parsed_domain = JSONDomainParser(self.ontology).parse(domain_json)
+
+    def then_the_completion_plan_is_available(self):
+        actual_completion_plan = self.parsed_domain.get_on_completion(PerformGoal(self.buy_action))
+        self.assertEqual(self.expected_completion_plan, actual_completion_plan)
+
+    def test_on_completion_plan_survives_domain_json_api_round_trip(self):
+        self.given_a_domain_with_an_on_completion_plan()
+        self.when_the_domain_is_serialized_and_parsed_as_json_api()
+        self.then_the_completion_plan_is_available()
+
+    def when_the_domain_is_serialized_and_parsed_as_json_api(self):
+        domain_json_api = self.domain_with_completion.as_json_api_dict()
+        included = json_api.IncludedObject(domain_json_api["included"])
+        self.parsed_domain = Domain.create_from_json_api_data(domain_json_api["data"], included, self.ontology)
 
     def _create_actions(self):
         for action_name in self.actions:

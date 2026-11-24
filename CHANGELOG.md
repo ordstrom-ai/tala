@@ -3,6 +3,8 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- DDD: add perform-goal replacement and completion-only follow-up hooks. TDM
+  runtime support is required before DDDs can use these constructs.
 
 ## [31.13.0] - 2026-11-23
 - DDD: add `forget_instructional_plan` with an explicit child-plan reset scope.

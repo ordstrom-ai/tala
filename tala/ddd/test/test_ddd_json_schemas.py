@@ -57,6 +57,42 @@ def test_ddd_bundle_schema_validates_wrapped_and_unwrapped_bundle(schemas_and_re
     validator.validate({"ddd": bundle})
 
 
+def test_domain_schema_accepts_goal_replacement_and_completion_hook(schemas_and_registry):
+    scenario = given_a_domain_using_goal_lifecycle_items(schemas_and_registry)
+    when_the_domain_is_validated(scenario)
+    then_goal_lifecycle_syntax_is_accepted(scenario)
+
+
+def given_a_domain_using_goal_lifecycle_items(schemas_and_registry):
+    schemas, registry = schemas_and_registry
+    document = {
+        "domain": {
+            "name": "Domain",
+            "plans": [{
+                "goal": {"perform": {"action": "collect"}},
+                "content": [{"replace_goal": {"goal": {"perform": {"action": "review"}}}}],
+            }, {
+                "goal": {"perform": {"action": "review"}},
+                "content": [],
+                "on_completion": [{"forget_all": {}}],
+            }],
+        }
+    }
+    return {"validator": Draft202012Validator(schemas["domain.schema.json"], registry=registry), "document": document}
+
+
+def when_the_domain_is_validated(scenario):
+    scenario["validation_error"] = None
+    try:
+        scenario["validator"].validate(scenario["document"])
+    except ValidationError as error:
+        scenario["validation_error"] = error
+
+
+def then_goal_lifecycle_syntax_is_accepted(scenario):
+    assert scenario["validation_error"] is None
+
+
 def test_domain_schema_accepts_kpq_question_used_by_compiler(schemas_and_registry):
     schemas, registry = schemas_and_registry
     domain = {

@@ -146,6 +146,11 @@ class DDDJSONCompiler(object):
                 self._append_plan_items(doc, postplan_element, plan.get("postplan", []))
                 goal_element.appendChild(postplan_element)
 
+            if "on_completion" in plan:
+                completion_element = doc.createElement("on_completion")
+                self._append_plan_items(doc, completion_element, plan.get("on_completion", []))
+                goal_element.appendChild(completion_element)
+
             for action in plan.get("superactions", []):
                 superaction = doc.createElement("superaction")
                 superaction.setAttribute("name", action)
@@ -309,6 +314,8 @@ class DDDJSONCompiler(object):
                 if "step" in payload:
                     element.setAttribute("step", str(payload["step"]))
             elif item_type == "jumpto":
+                self._apply_goal_attributes(element, payload["goal"])
+            elif item_type == "replace_goal":
                 self._apply_goal_attributes(element, payload["goal"])
             elif item_type == "assume_shared":
                 self._append_predicate_proposition(doc, element, payload["proposition"])

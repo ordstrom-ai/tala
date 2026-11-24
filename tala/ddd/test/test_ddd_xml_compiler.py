@@ -667,6 +667,174 @@ class TestGoalCompilation(DDDXMLCompilerTestCase):
         self._when_compile_goal_with_content('<postplan><forget_all/></postplan>')
         self._then_result_has_plan_with_attribute("postplan", Plan([plan_item.ForgetAll()]))
 
+    def test_on_completion_is_compiled_for_a_non_restarting_perform_goal(self):
+        self.given_an_ontology_for_a_perform_goal()
+        self.when_compiling_a_perform_goal_with_completion_hook()
+        self.then_the_completion_hook_is_stored_as_a_plan()
+
+    def given_an_ontology_for_a_perform_goal(self):
+        self._given_compiled_ontology('<ontology name="MockupOntology"><action name="book_room"/></ontology>')
+
+    def when_compiling_a_perform_goal_with_completion_hook(self):
+        self._when_compile_domain(
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan/><on_completion><forget_all/></on_completion></goal></domain>'
+        )
+
+    def then_the_completion_hook_is_stored_as_a_plan(self):
+        self._then_result_has_plan_with_attribute("on_completion", Plan([plan_item.ForgetAll()]))
+
+    def test_on_completion_is_rejected_for_a_restarting_goal(self):
+        self.given_an_ontology_for_a_perform_goal()
+        self.given_a_restarting_goal_with_a_completion_hook()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_the_completion_hook_is_rejected_for_restarting_goals()
+
+    def test_on_completion_is_rejected_for_the_up_goal(self):
+        self.given_an_ontology_for_a_perform_goal()
+        self.given_an_up_goal_with_a_completion_hook()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_builtin_up_completion_is_rejected()
+
+    def given_a_restarting_goal_with_a_completion_hook(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room" restart_on_completion="true">'
+            '<on_completion><forget_all/></on_completion></goal></domain>'
+        )
+
+    def then_the_completion_hook_is_rejected_for_restarting_goals(self):
+        assert self.lifecycle_error is not None
+        assert "restarting goals" in str(self.lifecycle_error)
+
+    def given_an_up_goal_with_a_completion_hook(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="up">'
+            '<on_completion><forget_all/></on_completion></goal></domain>'
+        )
+
+    def then_builtin_up_completion_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "built-in up goal" in str(self.lifecycle_error)
+
+    def test_replace_goal_rejects_redirecting_postplan(self):
+        self.given_an_ontology_for_a_replacement_goal()
+        self.given_a_replacement_with_a_redirecting_postplan()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_the_conflicting_postplan_is_rejected()
+
+    def given_an_ontology_for_a_replacement_goal(self):
+        self._given_compiled_ontology(
+            '<ontology name="MockupOntology"><action name="book_room"/><action name="cancel_room"/></ontology>'
+        )
+
+    def given_a_replacement_with_a_redirecting_postplan(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan><replace_goal type="perform" action="cancel_room"/></plan>'
+            '<postplan><jumpto type="perform" action="cancel_room"/></postplan></goal></domain>'
+        )
+
+    def then_the_conflicting_postplan_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "postplan redirects conflict" in str(self.lifecycle_error)
+
+    def test_replace_goal_rejects_postplan_goal_completion(self):
+        self.given_an_ontology_for_a_replacement_goal()
+        self.given_a_replacement_with_completion_postplan()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_the_goal_transition_in_postplan_is_rejected()
+
+    def given_a_replacement_with_completion_postplan(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan><replace_goal type="perform" action="cancel_room"/></plan>'
+            '<postplan><signal_action_completion/></postplan></goal></domain>'
+        )
+
+    def then_the_goal_transition_in_postplan_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "cannot load or complete another goal" in str(self.lifecycle_error)
+
+    def test_on_completion_rejects_postplan_ddd_transition(self):
+        self.given_an_ontology_for_a_perform_goal()
+        self.given_on_completion_with_ddd_change_in_postplan()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_the_postplan_conflict_is_rejected()
+
+    def given_on_completion_with_ddd_change_in_postplan(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan/><postplan><change_ddd name="OtherDomain"/></postplan>'
+            '<on_completion><forget_all/></on_completion></goal></domain>'
+        )
+
+    def then_the_postplan_conflict_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "on_completion conflicts with postplan" in str(self.lifecycle_error)
+
+    def test_replace_goal_rejects_its_source_goal(self):
+        self.given_replacement_actions_are_in_the_ontology()
+        self.given_a_goal_that_replaces_itself()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_self_replacement_is_rejected()
+
+    def given_replacement_actions_are_in_the_ontology(self):
+        self._given_compiled_ontology(
+            '<ontology name="MockupOntology"><action name="book_room"/>'
+            '<action name="review_room"/></ontology>'
+        )
+
+    def given_a_goal_that_replaces_itself(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan><replace_goal type="perform" action="book_room"/></plan></goal></domain>'
+        )
+
+    def then_self_replacement_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "cannot target its source goal" in str(self.lifecycle_error)
+
+    def test_replace_goal_rejects_undeclared_target(self):
+        self.given_replacement_actions_are_in_the_ontology()
+        self.given_a_goal_with_an_undeclared_replacement_target()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_undeclared_replacement_target_is_rejected()
+
+    def given_a_goal_with_an_undeclared_replacement_target(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="book_room">'
+            '<plan><replace_goal type="perform" action="review_room"/></plan></goal></domain>'
+        )
+
+    def then_undeclared_replacement_target_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "target has no goal definition" in str(self.lifecycle_error)
+
+    def test_replace_goal_is_rejected_on_the_up_goal(self):
+        self.given_an_ontology_for_a_replacement_goal()
+        self.given_an_up_goal_with_a_replacement_item()
+        self.when_compiling_a_domain_that_should_be_rejected()
+        self.then_builtin_up_replacement_is_rejected()
+
+    def given_an_up_goal_with_a_replacement_item(self):
+        self.domain_xml = (
+            '<domain name="Domain"><goal type="perform" action="up">'
+            '<plan><replace_goal type="perform" action="cancel_room"/></plan></goal>'
+            '<goal type="perform" action="cancel_room"><plan/></goal></domain>'
+        )
+
+    def then_builtin_up_replacement_is_rejected(self):
+        assert self.lifecycle_error is not None
+        assert "replace_goal is not supported on the built-in up goal" in str(self.lifecycle_error)
+
+    def when_compiling_a_domain_that_should_be_rejected(self):
+        try:
+            self._when_compile_domain(self.domain_xml)
+        except DDDXMLCompilerException as error:
+            self.lifecycle_error = error
+        else:
+            self.lifecycle_error = None
+
     def test_downdate_condition_with_whitespace(self):
         self._given_compiled_ontology(
             """
@@ -2346,6 +2514,26 @@ class TestPlanItemCompilation(DDDXMLCompilerTestCase):
         self._given_compiled_ontology()
         self._when_compile_domain_with_plan('<jumpto type="perform" action="top"/>')
         self._then_result_has_plan(Plan([self._parse("jumpto(perform(top))")]))
+
+    def test_replace_goal_compiles_as_a_plan_item(self):
+        self.given_source_and_target_perform_actions()
+        self.when_compiling_a_declared_replacement()
+        self.then_the_plan_contains_the_replacement_item()
+
+    def given_source_and_target_perform_actions(self):
+        self._given_compiled_ontology(
+            '<ontology name="MockupOntology"><action name="source"/><action name="target"/></ontology>'
+        )
+
+    def when_compiling_a_declared_replacement(self):
+        self._when_compile_domain(
+            '<domain name="Domain"><goal type="perform" action="source">'
+            '<plan><replace_goal type="perform" action="target"/></plan></goal>'
+            '<goal type="perform" action="target"><plan/></goal></domain>'
+        )
+
+    def then_the_plan_contains_the_replacement_item(self):
+        self._then_result_has_plan(Plan([self._parse("replace_goal(perform(target))")]))
 
     def test_assume_issue(self):
         self._given_compiled_ontology(

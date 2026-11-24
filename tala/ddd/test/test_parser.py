@@ -65,6 +65,22 @@ class ParserTests(unittest.TestCase):
         result = self._parser.parse_parameters(to_parse)
         return result
 
+    def test_replace_goal_is_parsed_and_survives_semantic_json_round_trip(self):
+        self.given_a_perform_goal_replacement_expression()
+        self.when_parsing_the_replacement()
+        self.then_the_replacement_and_round_trip_match_the_expected_goal()
+
+    def given_a_perform_goal_replacement_expression(self):
+        self.replacement_expression = "replace_goal(perform(buy))"
+
+    def when_parsing_the_replacement(self):
+        self.parsed_replacement = self._parser.parse(self.replacement_expression)
+        self.reparsed_replacement = self._json_parser.parse(self.parsed_replacement.as_json())
+
+    def then_the_replacement_and_round_trip_match_the_expected_goal(self):
+        self.assertEqual(plan_item.ReplaceGoal(PerformGoal(self.buy_action)), self.parsed_replacement)
+        self.assertEqual(self.parsed_replacement, self.reparsed_replacement)
+
     def _create_ontology(self):
         self.ontology_name = "mockup_ontology"
         sorts = {CustomSort(self.ontology_name, "city")}

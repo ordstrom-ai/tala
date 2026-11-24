@@ -29,6 +29,7 @@ TYPE_BIND = "bind"
 TYPE_DO = "do"
 TYPE_EMIT_ICM = "emit_icm"
 TYPE_JUMPTO = "jumpto"
+TYPE_REPLACE_GOAL = "replace_goal"
 TYPE_IF_THEN_ELSE = "if_then_else"
 TYPE_FORGET_ALL = "forget_all"
 TYPE_FORGET_INSTRUCTIONAL_PLAN = "forget_instructional_plan"
@@ -71,6 +72,7 @@ ALL_PLAN_ITEM_TYPES = [
     TYPE_DO,
     TYPE_EMIT_ICM,
     TYPE_JUMPTO,
+    TYPE_REPLACE_GOAL,
     TYPE_IF_THEN_ELSE,
     TYPE_FORGET_ALL,
     TYPE_FORGET_INSTRUCTIONAL_PLAN,
@@ -389,6 +391,15 @@ class Bind(PlanItemWithSemanticContent):
 class JumpTo(PlanItemWithSemanticContent):
     def __init__(self, content):
         PlanItemWithSemanticContent.__init__(self, TYPE_JUMPTO, content=content)
+
+    @property
+    def goal(self):
+        return self.content
+
+
+class ReplaceGoal(PlanItemWithSemanticContent):
+    def __init__(self, content):
+        PlanItemWithSemanticContent.__init__(self, TYPE_REPLACE_GOAL, content=content)
 
     @property
     def goal(self):
