@@ -47,6 +47,15 @@ class Plan(Stack, SemanticObject):
                         raise BaseException("item is None", item)
                     yield item
 
+        def generate_completion_items():
+            if "on_completion_content" in plan_data["relationships"]:
+                for plan_item_key in plan_data["relationships"]["on_completion_content"]["data"]:
+                    plan_item_data = included.get_object_from_relationship(plan_item_key)
+                    item = plan_item.PlanItem.create_from_json_api_data(plan_item_data, included)
+                    if item is None:
+                        raise BaseException("item is None", item)
+                    yield item
+
         goal_data = included.get_object_from_relationship(plan_data["relationships"]["goal"]["data"])
         goal = Goal.create_from_json_api_data(goal_data, included)
         preferred = False
@@ -81,7 +90,7 @@ class Plan(Stack, SemanticObject):
         return (
             goal, Plan(list(generate_plan_items())), list(generate_postplan_items()), downdate_conditions, superactions,
             preferred, unrestricted_accommodation, reraise_on_resume, max_answers, alternatives_predicate,
-            accommodate_without_feedback
+            accommodate_without_feedback, list(generate_completion_items())
         )
 
     def __init__(self, content=None):
@@ -113,6 +122,7 @@ class Plan(Stack, SemanticObject):
         downdate_conditions=None,
         superactions=None,
         unrestricted_accommodation=None,
+        on_completion=None,
     ):
         if goal is None:
             plan_obj = JSONAPIObject("tala.model.plan", self.json_api_id)
@@ -159,6 +169,9 @@ class Plan(Stack, SemanticObject):
 
         for plan_item_ in postplan:
             obj.append_relationship("postplan_content", plan_item_.as_json_api_dict())
+
+        for plan_item_ in on_completion or []:
+            obj.append_relationship("on_completion_content", plan_item_.as_json_api_dict())
 
         for superaction in superactions:
             obj.append_relationship("superactions", superaction.as_json_api_dict())

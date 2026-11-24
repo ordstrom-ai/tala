@@ -30,6 +30,7 @@
             <xs:element name="postcond" type="proposition" minOccurs="0" maxOccurs="unbounded"/>
             <xs:element name="downdate_condition" type="new_condition" minOccurs="0" maxOccurs="unbounded"/>
             <xs:element name="postplan" type="plan" minOccurs="0" maxOccurs="1"/>
+            <xs:element name="on_completion" type="plan" minOccurs="0" maxOccurs="1"/>
             <xs:element name="proposition" type="proposition" minOccurs="0" maxOccurs="1"/>
             <xs:element name="preferred" type="proposition" minOccurs="0" maxOccurs="1"/>
             <xs:element ref="superaction" minOccurs="0" maxOccurs="unbounded"/>
@@ -168,6 +169,7 @@
       <xs:element ref="if" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="once" type="once"/>
       <xs:element name="jumpto" type="has_goal" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="replace_goal" type="has_goal" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="signal_action_completion" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="signal_action_failure" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element ref="end_turn" minOccurs="0" maxOccurs="unbounded"/>

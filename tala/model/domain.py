@@ -65,12 +65,13 @@ class Domain(AsJSONMixin, JSONAPIMixin):
         def create_plans(plans, included):
             for (
                 goal, plan, postplan, downdate_conditions, superactions, preferred, unrestricted_accommodation,
-                reraise_on_resume, max_answers, alternatives_predicate, accommodate_without_feedback
+                reraise_on_resume, max_answers, alternatives_predicate, accommodate_without_feedback, on_completion
             ) in create_plans_content(plans, included):
                 yield {
                     "goal": goal,
                     "plan": plan,
                     "postplan": postplan,
+                    "on_completion": on_completion,
                     "postconds": downdate_conditions,
                     "superactions": superactions,
                     "preferred": preferred,
@@ -460,12 +461,13 @@ class Domain(AsJSONMixin, JSONAPIMixin):
             downdate_conditions = plan.get("postconds", [])
             superactions = plan.get("superactions", [])
             unrestricted_accommodation = plan.get("unrestricted_accommodation", False)
+            on_completion = plan.get("on_completion", [])
             domain_object.append_relationship(
                 "plans",
                 actual_plan.as_json_api_dict(
                     goal, preferred, accommodate_without_feedback, restart_on_completion, reraise_on_resume,
                     max_answers, alternatives_predicate, postplan, downdate_conditions, superactions,
-                    unrestricted_accommodation
+                    unrestricted_accommodation, on_completion
                 )
             )
 
@@ -626,6 +628,11 @@ class Domain(AsJSONMixin, JSONAPIMixin):
             return self.get_goal_attribute(goal, 'postplan')
         else:
             return []
+
+    def get_on_completion(self, goal):
+        if self.has_goal(goal):
+            return self.get_goal_attribute(goal, "on_completion")
+        return []
 
     def get_superactions(self, goal):
         if self.has_goal(goal):

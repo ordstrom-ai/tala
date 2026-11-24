@@ -269,6 +269,7 @@ class DomainCompiler(XmlCompiler):
         self._domain_element = self._get_root_element("domain")
         self._compile_name()
         self._compile_plans()
+        self._validate_replacement_targets()
         self._compile_default_questions()
         self._compile_parameters()
         self._compile_domain_queries()
@@ -299,6 +300,17 @@ class DomainCompiler(XmlCompiler):
         elements = self._document.getElementsByTagName("goal")
         self._plans = [self._compile_goal_element(element) for element in elements]
 
+    def _validate_replacement_targets(self):
+        defined_goals = {plan["goal"] for plan in self._plans}
+        implicit_goal_actions = {"top", "up"}
+        for plan in self._plans:
+            for item in plan["plan"]:
+                if item.type_ != plan_item.TYPE_REPLACE_GOAL or item.goal in defined_goals:
+                    continue
+                if item.goal.action.value in implicit_goal_actions:
+                    continue
+                raise DDDXMLCompilerException(f"replace_goal target has no goal definition: {item.goal}")
+
     def _compile_goal_element(self, element):
         goal = self._compile_goal(element)
         plan = {"goal": goal}
@@ -311,13 +323,63 @@ class DomainCompiler(XmlCompiler):
         if element.hasAttribute("alternatives_predicate"):
             plan["alternatives_predicate"] = element.getAttribute("alternatives_predicate")
         self._compile_plan(plan, element, "postplan")
+        self._compile_plan(plan, element, "on_completion")
         self._compile_plan_element_with_multiple_children(
             plan, element, "postconds", "downdate_condition", self._compile_condition
         )
         self._compile_plan_element_with_multiple_children(
             plan, element, "superactions", "superaction", self._compile_superaction
         )
+        self._validate_goal_lifecycle(goal, plan)
         return plan
+
+    def _validate_goal_lifecycle(self, goal, plan):
+        completion_plan = plan.get("on_completion")
+        goal_plan = plan["plan"]
+        postplan = plan.get("postplan", Plan([]))
+        has_replacement = self._plan_contains(goal_plan, plan_item.TYPE_REPLACE_GOAL)
+
+        if completion_plan is not None:
+            if not goal.is_perform_goal():
+                raise DDDXMLCompilerException("on_completion is only supported for perform goals")
+            if goal.action.value == "up":
+                raise DDDXMLCompilerException("on_completion is not supported on the built-in up goal")
+            if goal.action.value == "top" or plan.get("restart_on_completion", False):
+                raise DDDXMLCompilerException("on_completion is not supported for top or restarting goals")
+            if self._plan_contains(completion_plan, plan_item.TYPE_REPLACE_GOAL):
+                raise DDDXMLCompilerException("replace_goal is only supported in a perform goal plan")
+
+        if has_replacement and goal.is_perform_goal() and goal.action.value == "up":
+            raise DDDXMLCompilerException("replace_goal is not supported on the built-in up goal")
+        if has_replacement and not goal.is_perform_goal():
+            raise DDDXMLCompilerException("replace_goal is only supported in a perform goal plan")
+        if any(item.goal == goal for item in goal_plan if item.type_ == plan_item.TYPE_REPLACE_GOAL):
+            raise DDDXMLCompilerException("replace_goal cannot target its source goal")
+        if self._plan_contains(postplan, plan_item.TYPE_REPLACE_GOAL):
+            raise DDDXMLCompilerException("replace_goal is only supported in a perform goal plan")
+        if has_replacement and self._replacement_postplan_has_goal_transition(postplan):
+            raise DDDXMLCompilerException("replace_goal postplan cannot load or complete another goal")
+        if completion_plan is not None and self._replacement_postplan_has_goal_transition(postplan):
+            raise DDDXMLCompilerException("on_completion conflicts with postplan goal transitions")
+        if (has_replacement or completion_plan is not None) and self._plan_contains_redirect(postplan):
+            raise DDDXMLCompilerException("postplan redirects conflict with replace_goal or on_completion")
+
+    def _plan_contains(self, plan, item_type):
+        return any(item.type_ == item_type for item in plan)
+
+    def _plan_contains_redirect(self, plan):
+        redirect_types = {plan_item.TYPE_JUMPTO, plan_item.TYPE_REPLACE_GOAL}
+        return any(item.type_ in redirect_types for item in plan)
+
+    def _replacement_postplan_has_goal_transition(self, plan):
+        transition_types = {
+            plan_item.TYPE_DO,
+            plan_item.TYPE_RESPOND,
+            plan_item.TYPE_ACTION_PERFORMED,
+            plan_item.TYPE_ACTION_ABORTED,
+            plan_item.TYPE_CHANGE_DDD,
+        }
+        return any(item.type_ in transition_types for item in plan)
 
     def _compile_plan(self, plan, element, attribute_name, default=None):
         plan_elements = self._find_child_nodes(element, attribute_name)
@@ -497,6 +559,8 @@ class DomainCompiler(XmlCompiler):
             return self._compile_get_done_element(element)
         elif element.localName == "jumpto":
             return self._compile_jumpto_element(element)
+        elif element.localName == "replace_goal":
+            return self._compile_replace_goal_element(element)
         elif element.localName == "assume_shared":
             return self._compile_assume_shared_element(element)
         elif element.localName == "assume_issue":
@@ -663,6 +727,12 @@ class DomainCompiler(XmlCompiler):
     def _compile_jumpto_element(self, element):
         goal = self._compile_goal(element)
         return [plan_item.JumpTo(goal)]
+
+    def _compile_replace_goal_element(self, element):
+        goal = self._compile_goal(element)
+        if not goal.is_perform_goal():
+            raise DDDXMLCompilerException("replace_goal only supports perform goals")
+        return [plan_item.ReplaceGoal(goal)]
 
     def _compile_assume_shared_element(self, element):
         predicate_proposition = self._compile_predicate_proposition_child_of(element)

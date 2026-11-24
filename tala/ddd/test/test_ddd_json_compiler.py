@@ -6,6 +6,48 @@ from tala.ddd.parser import Parser
 from tala.model.ontology import Ontology
 
 
+def test_compile_domain_supports_replace_goal_and_on_completion():
+    scenario = given_a_json_domain_with_goal_lifecycle_items()
+    when_the_domain_is_compiled(scenario)
+    then_the_replacement_and_completion_hook_are_preserved(scenario)
+
+
+def given_a_json_domain_with_goal_lifecycle_items():
+    compiler = DDDJSONCompiler()
+    ontology = Ontology(**compiler.compile_ontology({
+        "ontology": {"name": "Ontology", "actions": ["collect", "review"], "predicates": []}
+    }))
+    parser = Parser("mock_ddd", ontology, "Domain")
+    source = {
+        "domain": {
+            "name": "Domain",
+            "plans": [{
+                "goal": {"perform": {"action": "collect"}},
+                "content": [{"replace_goal": {"goal": {"perform": {"action": "review"}}}}],
+            }, {
+                "goal": {"perform": {"action": "review"}},
+                "content": [],
+                "on_completion": [{"forget_all": {}}],
+            }],
+        }
+    }
+    return {"compiler": compiler, "ontology": ontology, "parser": parser, "source": source}
+
+
+def when_the_domain_is_compiled(scenario):
+    scenario["compiled"] = scenario["compiler"].compile_domain(
+        "Domain", scenario["source"], scenario["ontology"], scenario["parser"]
+    )
+
+
+def then_the_replacement_and_completion_hook_are_preserved(scenario):
+    replacement_plan = scenario["compiled"]["plans"][0]["plan"]
+    completion_plan = scenario["compiled"]["plans"][1]["on_completion"]
+    assert replacement_plan.top.type_ == "replace_goal"
+    assert replacement_plan.top.goal.action.value == "review"
+    assert [item.type_ for item in completion_plan] == ["forget_all"]
+
+
 def test_compile_domain_emits_allow_binding_yn_answers_flag():
     compiler = DDDJSONCompiler()
     ontology_args = compiler.compile_ontology({

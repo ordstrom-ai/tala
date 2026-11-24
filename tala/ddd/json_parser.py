@@ -298,7 +298,7 @@ class JSONDomainParser():
                 result[entry] = self.parse_plan(goal[entry])
             elif entry == "postconds":
                 result[entry] = self.parse_postconds(goal[entry])
-            elif entry == "postplan":
+            elif entry in ["postplan", "on_completion"]:
                 result[entry] = self.parse_postplan(goal[entry])
             elif entry == "preferred":
                 result[entry] = self.parse_preferred(goal[entry])
@@ -608,6 +608,8 @@ class NonCheckingJSONParser():
             return self.parse_if_then_else_plan_item(data[plan_item.TYPE_IF_THEN_ELSE])
         if plan_item.TYPE_JUMPTO in data:
             return self.parse_jumpto_plan_item(data[plan_item.TYPE_JUMPTO])
+        if plan_item.TYPE_REPLACE_GOAL in data:
+            return self.parse_replace_goal_plan_item(data[plan_item.TYPE_REPLACE_GOAL])
         if plan_item.TYPE_INVOKE_SERVICE_QUERY in data:
             return self.parse_invoke_service_query_plan_item(data[plan_item.TYPE_INVOKE_SERVICE_QUERY])
         if plan_item.TYPE_INVOKE_DOMAIN_QUERY in data:
@@ -775,6 +777,10 @@ class NonCheckingJSONParser():
     def parse_jumpto_plan_item(self, data):
         goal = self.parse_goal(data)
         return plan_item.JumpTo(goal)
+
+    def parse_replace_goal_plan_item(self, data):
+        goal = self.parse_goal(data)
+        return plan_item.ReplaceGoal(goal)
 
     def parse_if_then_else_plan_item(self, data):
         cond = self.parse(data["condition"])
