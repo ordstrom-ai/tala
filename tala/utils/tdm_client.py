@@ -102,9 +102,11 @@ class TDMClient(Observable):
         response = self._make_request(request)
         return response
 
-    def start_session(self, session_data: Mapping = None) -> Mapping:
+    def start_session(self, session_data: Mapping = None, *, request_id: str = None) -> Mapping:
         session_object = session_data or {}
         request = {"version": PROTOCOL_VERSION, "session": session_object, "request": {"start_session": {}}}
+        if request_id is not None:
+            request["request_id"] = request_id
         response = self._make_request(request)
         return response
 

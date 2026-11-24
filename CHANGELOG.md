@@ -3,6 +3,11 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- Interaction testing: add `IncrementalTDMClient` and the
+  `incremental_speech_content` test-case entry for scripted hypothesis updates,
+  utterance finalization, and acknowledgement timing before the normal TDM turn.
+  The entry is a sequence of hypothesis lists; all but the final list are sent
+  as updates, then the last is finalized before the ordinary speech-input turn.
 - DDD: add perform-goal replacement and completion-only follow-up hooks. TDM
   runtime support is required before DDDs can use these constructs.
 
