@@ -3,6 +3,9 @@ This changelog is curated and focuses on major changes. For the full historical
 record before 12.0.0, see CHANGELOG.legacy.md.
 
 ## Unreleased
+- SSE: add named production and staging broker routes for backend-assigned
+  sessions. Listeners and publishers can resolve the same route without using
+  a WebSocket URL supplied by the browser. Existing SSE client configuration is unchanged.
 - Interaction testing: add `IncrementalTDMClient` and the
   `incremental_speech_content` test-case entry for scripted hypothesis updates,
   utterance finalization, and acknowledgement timing before the normal TDM turn.
