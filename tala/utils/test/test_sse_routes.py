@@ -1,96 +1,68 @@
 import pytest
 
-from tala.utils import sse_client, sse_routes
+from tala.utils import sse_client
+from tala.utils.sse_routes import publisher_origin_for_listener_endpoint
 
 
-class TestSSEBrokerRoutes:
+class TestSSEBrokerEndpoint:
     @pytest.mark.parametrize(
-        "route,host", [
-            ("production", "production-sse-broker-ordstrom.azurewebsites.net"),
-            ("staging", "staging-sse-broker-ordstrom.azurewebsites.net"),
+        "listener_endpoint,expected_publisher_origin", [
+            ("https://example.invalid/event-sse", "wss://example.invalid"),
+            ("https://example.invalid/event-sse/", "wss://example.invalid"),
+            ("http://127.0.0.1:8123/event-sse", "ws://127.0.0.1:8123"),
+            ("http://localhost:8123/event-sse/", "ws://localhost:8123"),
         ]
     )
-    def test_named_route_resolves_listener_and_publisher_endpoints(self, route, host):
-        self.given_a_named_broker_route(route)
-        self.when_broker_endpoints_are_resolved()
-        self.then_both_transports_use_the_same_broker_host(host)
+    def test_listener_endpoint_resolves_a_safe_publisher_origin(
+        self, listener_endpoint, expected_publisher_origin
+    ):
+        self.given_a_listener_endpoint(listener_endpoint)
+        self.when_its_publisher_origin_is_resolved()
+        self.then_the_expected_publisher_origin_is_used(expected_publisher_origin)
 
-    def given_a_named_broker_route(self, route):
-        self.route = route
-        self.logger = object()
+    def given_a_listener_endpoint(self, listener_endpoint):
+        self.listener_endpoint = listener_endpoint
 
-    def when_broker_endpoints_are_resolved(self):
-        self.listener_endpoint = sse_routes.broker_listener_endpoint(self.route)
-        self.publisher_origin = sse_routes.broker_publisher_origin(self.route)
+    def when_its_publisher_origin_is_resolved(self):
+        self.publisher_origin = publisher_origin_for_listener_endpoint(self.listener_endpoint)
 
-    def then_both_transports_use_the_same_broker_host(self, host):
-        assert self.listener_endpoint == f"https://{host}/event-sse"
-        assert self.publisher_origin == f"wss://{host}"
+    def then_the_expected_publisher_origin_is_used(self, expected_publisher_origin):
+        assert self.publisher_origin == expected_publisher_origin
 
-    @pytest.mark.parametrize(
-        "endpoint,expected_route", [
-            ("https://production-sse-broker-ordstrom.azurewebsites.net/event-sse/", "production"),
-            ("https://staging-sse-broker-ordstrom.azurewebsites.net/event-sse", "staging"),
-            ("http://127.0.0.1:8000/event-sse", None),
-            (None, None),
-        ]
-    )
-    def test_listener_endpoint_selects_only_a_known_broker_route(self, endpoint, expected_route):
-        self.given_a_listener_endpoint(endpoint)
-        self.when_its_broker_route_is_resolved()
-        self.then_only_a_known_endpoint_has_a_route(expected_route)
-
-    def given_a_listener_endpoint(self, endpoint):
-        self.endpoint = endpoint
-
-    def when_its_broker_route_is_resolved(self):
-        self.route = sse_routes.broker_route_for_listener_endpoint(self.endpoint)
-
-    def then_only_a_known_endpoint_has_a_route(self, expected_route):
-        assert self.route == expected_route
-
-    def test_route_specific_sse_client_uses_its_selected_publisher_origin(self):
-        self.given_a_named_broker_route("staging")
+    def test_route_specific_sse_client_uses_the_listener_endpoint_host(self):
+        self.given_a_listener_endpoint("https://example.invalid/event-sse")
         self.when_a_route_specific_publisher_is_created()
-        self.then_the_publisher_uses_the_staging_broker()
-
-    def given_a_named_route_for_a_publisher(self, route):
-        self.route = route
-        self.logger = object()
+        self.then_the_publisher_uses_the_resolved_origin()
 
     def when_a_route_specific_publisher_is_created(self):
-        self.client = sse_client.SSEClient.for_broker_route("test-publisher", self.logger, self.route)
+        self.client = sse_client.SSEClient.for_broker_endpoint("test-publisher", object(), self.listener_endpoint)
 
-    def then_the_publisher_uses_the_staging_broker(self):
-        assert self.client._endpoint == sse_routes.broker_publisher_origin("staging")
+    def then_the_publisher_uses_the_resolved_origin(self):
+        assert self.client._endpoint == "wss://example.invalid"
 
-    @pytest.mark.parametrize("route", ["", "development", "https://example.invalid"])
-    def test_unknown_route_is_rejected_instead_of_becoming_an_arbitrary_url(self, route):
-        self.given_a_named_route_for_a_publisher(route)
-        self.when_a_route_specific_publisher_is_created_with_error_capture()
-        self.then_unknown_route_is_rejected()
+    @pytest.mark.parametrize(
+        "listener_endpoint", [
+            "ftp://example.invalid/event-sse",
+            "http://example.invalid/event-sse",
+            "https://example.invalid/other",
+            "https://user:password@example.invalid/event-sse",
+            "https://example.invalid/event-sse?redirect=unsafe",
+            "https://example.invalid/event-sse#fragment",
+        ]
+    )
+    def test_invalid_listener_endpoint_is_rejected(self, listener_endpoint):
+        self.given_a_listener_endpoint(listener_endpoint)
+        self.when_its_publisher_origin_is_validated()
+        self.then_the_listener_endpoint_is_rejected()
 
-    def when_a_route_specific_publisher_is_created_with_error_capture(self):
+    def when_its_publisher_origin_is_validated(self):
         self.error = None
         try:
-            self.client = sse_client.SSEClient.for_broker_route("test-publisher", self.logger, self.route)
+            publisher_origin_for_listener_endpoint(self.listener_endpoint)
         except ValueError as error:
             self.error = error
 
-    def then_unknown_route_is_rejected(self):
-        assert self.error.args == ("Unknown SSE broker route",)
-
-    @pytest.mark.parametrize("route", [None, "production", "staging"])
-    def test_session_route_is_validated_and_legacy_sessions_remain_unrouted(self, route):
-        self.given_a_session(route)
-        self.when_its_route_is_read()
-        self.then_the_route_is_preserved(route)
-
-    def given_a_session(self, route):
-        self.session = {} if route is None else {sse_routes.SSE_BROKER_ROUTE: route}
-
-    def when_its_route_is_read(self):
-        self.route = sse_routes.broker_route_from_session(self.session)
-
-    def then_the_route_is_preserved(self, expected_route):
-        assert self.route == expected_route
+    def then_the_listener_endpoint_is_rejected(self):
+        assert self.error.args == ("Invalid SSE listener endpoint",) or self.error.args == (
+            "Non-local SSE listener endpoints must use HTTPS",
+        )

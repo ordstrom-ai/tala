@@ -15,7 +15,7 @@ class TestInteractionTesterStreamRoute:
         self.then_the_listener_uses_the_configured_fallback()
 
     def given_an_interaction_tester_with_a_session_route(self, monkeypatch):
-        self.session_endpoint = "https://production-sse-broker-ordstrom.azurewebsites.net/event-sse/"
+        self.session_endpoint = "https://production.example/event-sse/"
         self.given_an_interaction_tester(monkeypatch, {"sse_endpoint": self.session_endpoint})
 
     def given_an_interaction_tester_without_a_session_route(self, monkeypatch):

@@ -11,7 +11,7 @@ import requests
 import structlog
 
 from tala.utils.log_context import validated_correlation_context
-from tala.utils.sse_routes import broker_publisher_origin
+from tala.utils.sse_routes import publisher_origin_for_listener_endpoint
 
 STREAMING_DONE = "STREAMING_DONE"
 STREAMING_SET_PERSONA = "STREAMING_SET_PERSONA"
@@ -475,8 +475,9 @@ class SSEClient(AbstractSSEClient):
         self._open_sequence = 0
 
     @classmethod
-    def for_broker_route(cls, client_id_base, logger, route: str):
-        return cls(client_id_base, logger, broker_publisher_origin(route))
+    def for_broker_endpoint(cls, client_id_base, logger, listener_endpoint: str):
+        publisher_origin = publisher_origin_for_listener_endpoint(listener_endpoint)
+        return cls(client_id_base, logger, publisher_origin)
 
     def set_persona(self, session_id, persona):
         if persona:
