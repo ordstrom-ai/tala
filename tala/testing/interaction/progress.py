@@ -73,6 +73,9 @@ class InteractionTestProgress:
         self._context.update(entry_index=entry_index, speaker=speaker)
         self.emit("entry_started")
 
+    def set_session_id(self, session_id):
+        self._context["session_id"] = session_id
+
     def complete_entry(self, success, elapsed_seconds, error=None):
         if error is not None:
             self.record_error(error)

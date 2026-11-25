@@ -18,6 +18,7 @@ from tala.utils.tdm_client import TDMClient
 
 from tala.testing.interaction.comparison import StringComparison, MoveComparison
 from tala.testing.interaction.progress import InteractionTestProgress
+from tala.testing.interaction.incremental_tdm_client import IncrementalTDMClient
 from tala.testing.interaction.stream_listener import StreamListener
 from tala.testing.interaction.stream_listener import StreamListenerError
 from tala.testing.interaction.stream_listener import StreamListenerTimeoutError
@@ -31,6 +32,7 @@ TEST_NAME = "name"
 MOVE_CONTENT = "move_content"
 INTERPRETATIONS = "interpretations"
 SPEECH_CONTENT = "speech_content"
+INCREMENTAL_SPEECH_CONTENT = "incremental_speech_content"
 OUTPUT = "output"
 MOVES = "moves"
 SESSION = "session"
@@ -130,9 +132,14 @@ class InteractionTester:
             self._session_data.update(offer)
         self._session_data["neural"] = self._neural
         with self._progress.request("start_session"):
-            self._latest_response = self._client.start_session(self._session_data)
+            if self._incremental_input:
+                self._latest_response = self._client.start_session(
+                    self._session_data, request_id=str(uuid.uuid4()), incremental_input=True
+                )
+            else:
+                self._latest_response = self._client.start_session(self._session_data)
+            self._update_session_data()
         logger.info("starting session", session_id=self._session_id)
-        self._session_data = self._latest_response[SESSION]
 
     def _initialize_session_object(self):
         self._session_data = {"device_id": self._device_id, "session_id": self._session_id}
@@ -214,6 +221,7 @@ class InteractionTester:
         self._output_buffer = OutputBuffer()
         self._ddd_name = testcase["target_ddd"]
         self._neural = testcase.get("neural")
+        self._incremental_input = testcase.get("incremental_input", False) is True
         self._start_date = {time.asctime()}
         url = self._patch_url_with_port(testcase["url"])
         self._client = TDMClient(url)
@@ -228,12 +236,12 @@ class InteractionTester:
         self._stream_start_times = []
         self._stream_end_times = []
         self._silent_stream_skip_count = 0
+        self._incremental_event_history = []
 
     def _start_stream_listener(self):
         if self._use_streaming:
-            self._stream_listener_thread = StreamListener(
-                StreamListener.SSE_BROKER_ENDPOINT_HTTPS, self._session_id, logger
-            )
+            stream_endpoint = self._session_data.get("sse_endpoint") or StreamListener.SSE_BROKER_ENDPOINT_HTTPS
+            self._stream_listener_thread = StreamListener(stream_endpoint.rstrip("/"), self._session_id, logger)
             self._stream_listener_thread.start()
             try:
                 self._stream_listener_thread.wait_until_started()
@@ -315,6 +323,10 @@ class InteractionTester:
                 self._create_passivity_mismatch_description(user_entry[EXPECTED_PASSIVITY])
                 return False
             self._request_passivity()
+        elif INCREMENTAL_SPEECH_CONTENT in user_entry:
+            revisions = self._create_incremental_hypotheses(user_entry[INCREMENTAL_SPEECH_CONTENT])
+            self._buffer_output(f"U> {revisions[-1][0].utterance}")
+            self._request_incremental_speech_input(revisions)
         elif SPEECH_CONTENT in user_entry:
             utterance = user_entry.get(SPEECH_CONTENT)
             self._buffer_output(f"U> {utterance}")
@@ -392,7 +404,9 @@ class InteractionTester:
             self._update_session_data()
 
     def _request_speech_input(self, utterance):
-        hypotheses = [InputHypothesis(utterance, 1.0)]
+        return self._request_speech_hypotheses([InputHypothesis(utterance, 1.0)])
+
+    def _request_speech_hypotheses(self, hypotheses):
         with self._progress.request("speech_input"):
             self._start_stream_listener()
             self._request_times.append(time.time())
@@ -405,11 +419,53 @@ class InteractionTester:
             self._add_streamed_output()
             self._update_session_data()
 
+    @staticmethod
+    def _create_incremental_hypotheses(revision_definitions):
+        if not revision_definitions:
+            raise InteractionTesterException("Incremental speech content must contain at least one revision.")
+        try:
+            revisions = [[
+                InputHypothesis(hypothesis["utterance"], hypothesis.get("confidence", 1.0)) for hypothesis in revision
+            ] for revision in revision_definitions]
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise InteractionTesterException("Incremental speech revisions have an invalid shape.") from error
+        if any(not revision for revision in revisions):
+            raise InteractionTesterException("Every incremental speech revision needs at least one hypothesis.")
+        return revisions
+
+    def _request_incremental_speech_input(self, revisions):
+        if not self._incremental_input:
+            raise InteractionTesterException("Incremental speech requires incremental_input=true for this test case.")
+        incremental_client = IncrementalTDMClient(self._client)
+        try:
+            for interim_hypotheses in revisions[:-1]:
+                with self._progress.request("utterance_hypotheses_updated"):
+                    incremental_client.submit_hypotheses(interim_hypotheses, self._session_data)
+                    self._use_session_data(incremental_client.session)
+
+            with self._progress.request("utterance_finalized"):
+                incremental_client.finalize_utterance(revisions[-1], self._session_data)
+                self._use_session_data(incremental_client.session)
+        finally:
+            self._incremental_event_history = incremental_client.event_history
+            if incremental_client.session is not None:
+                self._use_session_data(incremental_client.session)
+
+        self._request_speech_hypotheses(revisions[-1])
+
     def _update_session_data(self):
         try:
-            self._session_data = self._latest_response["session"]
+            session_data = self._latest_response["session"]
         except KeyError:
             warnings.warn(f"response has no session data: {self._latest_response}")
+            return
+        self._use_session_data(session_data)
+
+    def _use_session_data(self, session_data):
+        self._session_data = session_data
+        if "session_id" in session_data:
+            self._session_id = session_data["session_id"]
+            self._progress.set_session_id(self._session_id)
 
     def _create_user_move(self, move):
         prefixed = self._split_prefixed_move(move)
@@ -769,6 +825,9 @@ class InteractionTester:
         response["session_id"] = self._session_id
 
         response["transcript"] = str(self._output_buffer)
+
+        if self._incremental_event_history:
+            response["incremental_event_history"] = copy.deepcopy(self._incremental_event_history)
 
         response["start_time"] = self._start_time
         response["running_time"] = self._end_time - self._start_time

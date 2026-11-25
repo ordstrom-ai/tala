@@ -98,7 +98,7 @@ class InteractionProgressTestCase:
         monkeypatch.setattr(f"{TESTER_MODULE}.time.time", lambda: self._now)
         monkeypatch.setattr(f"{TESTER_MODULE}.time.perf_counter", lambda: self._now)
 
-        def start_session(*args):
+        def start_session(*args, **kwargs):
             self._now += 1.0
             return copy.deepcopy(self._response)
 
