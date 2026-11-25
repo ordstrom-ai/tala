@@ -28,6 +28,57 @@ class TestIncrementalBackendContract:
 
         self.then_final_hypothesis_uses_cached_nlu_in_one_completed_pipeline_turn()
 
+    @pytest.mark.parametrize("capability_enabled", ["false", "true"])
+    def test_standard_turn_keeps_the_legacy_api_with_incremental_capability_on_or_off(
+        self, monkeypatch, request, capability_enabled
+    ):
+        self.given_local_backend_sources_are_available(monkeypatch, request)
+        self.given_local_backend_dependencies_are_stubbed(monkeypatch)
+        self.given_standard_session_capability_settings(monkeypatch, capability_enabled)
+
+        self.when_one_standard_speech_turn_runs()
+
+        self.then_the_standard_turn_uses_no_incremental_backend_operations()
+
+    def given_standard_session_capability_settings(self, monkeypatch, capability_enabled):
+        monkeypatch.setenv("INPUT_TURN_CONTEXT_HANDOFF_ENABLED", capability_enabled)
+        monkeypatch.setenv("INPUT_TURN_BACKEND_ENABLED", capability_enabled)
+        monkeypatch.setattr(self.pipeline_app, "input_turn_backend_enabled", lambda: capability_enabled == "true")
+
+    def when_one_standard_speech_turn_runs(self):
+        self.response = InteractionTester(
+            port=None, use_streaming=False
+        ).run_testcase(
+            {
+                "name": "synthetic standard turn",
+                "target_ddd": "travel",
+                "url": "https://handler.example/api/interact/offer-1",
+                "neural": True,
+                "interaction": [{
+                    "speaker": "user",
+                    "speech_content": "Turn left at the next street.",
+                }, {
+                    "speaker": "system",
+                    "speech_content": "Destination selected.",
+                }],
+            },
+            offer={"offer_id": "offer-1"},
+        )
+
+    def then_the_standard_turn_uses_no_incremental_backend_operations(self):
+        assert self.response["success"] is True
+        assert len(self.downstream.nlu_requests) == 1
+        assert len(self.downstream.dm_requests) == 2
+        assert len(self.http_dispatch.legacy_pipeline_requests) == 2
+        assert self.http_dispatch.internal_function_keys == []
+        assert "incremental_event_history" not in self.response
+        start_request = self.http_dispatch.frontend_requests[0]["body"]
+        assert start_request["request"]["start_session"] == {}
+        assert "request_id" not in start_request
+        assert self.response["session_id"] == start_request["session"]["session_id"]
+        scope = self.pipeline_store.InputTurnScope("offer-1", self.response["session_id"])
+        assert self.input_turn_store.read(scope) is None
+
     def given_local_backend_sources_are_available(self, monkeypatch, request):
         handler_source = os.environ.get(HANDLER_SOURCE_ENV)
         pipeline_source = os.environ.get(PIPELINE_SOURCE_ENV)
@@ -140,6 +191,8 @@ class TestIncrementalBackendContract:
             self.handler_serve.SESSION_ENCRYPTION_KEY_ENV: Fernet.generate_key().decode("utf-8"),
             "INPUT_TURN_CONTEXT_HANDOFF_ENABLED": "true",
             "PIPELINE_INPUT_TURN_ENDPOINT": "https://pipeline.example/api/input-turn/execute",
+            "PIPELINE_ENDPOINT": "https://pipeline.example/api/pipeline-fn",
+            "TDM_ENDPOINT": "https://pipeline.example/api/pipeline-fn",
             "PIPELINE_CONTEXT_COMMIT_ENDPOINT": "https://pipeline.example/api/input-turn/commit-handler-context",
             "PIPELINE_CONTEXT_COMMIT_FUNCTION_KEY": FUNCTION_KEY,
             "PIPELINE_UTTERANCE_EVENT_ENDPOINT": "https://pipeline.example/api/input-turn/utterance-event",
@@ -172,7 +225,7 @@ class TestIncrementalBackendContract:
             make_request_to_qna_ndg=self.downstream.unexpected_nlu_downstream_call,
             make_request_to_ndg=self.downstream.unexpected_nlu_downstream_call,
             make_request_to_ndg_system=self.downstream.unexpected_nlu_downstream_call,
-            make_request_to_nlu=self.downstream.unexpected_nlu_downstream_call,
+            make_request_to_nlu=self.downstream.make_request_to_nlu,
             make_request=self.downstream.unexpected_nlu_downstream_call,
         )
 
@@ -185,6 +238,7 @@ class TestIncrementalBackendContract:
         self.response = self.tester.run_testcase(
             {
                 "name": "synthetic incremental turn",
+                "incremental_input": True,
                 "target_ddd": "travel",
                 "url": "https://handler.example/api/interact/offer-1",
                 "neural": True,
@@ -231,6 +285,8 @@ class TestIncrementalBackendContract:
         )
         event_request = self.http_dispatch.frontend_requests[1]
         assert start_request["body"]["request_id"]
+        assert start_request["body"]["request"]["start_session"] == {"incremental_input": True}
+        assert self.downstream.dm_requests[0]["request"]["start_session"] == {}
         assert self.response["session_id"] == event_request["body"]["session"]["session_id"]
         assert self.response["session_id"] != start_request["body"]["session"]["session_id"]
 
@@ -400,12 +456,19 @@ class LocalFunctionDispatcher:
         self._handler_function_app = handler_function_app
         self._pipeline_function_app = pipeline_function_app
         self.frontend_requests = []
+        self.legacy_pipeline_requests = []
         self.internal_function_keys = []
 
     def post(self, url, *, data=None, json=None, headers=None, timeout=None, allow_redirects=True):
         request_body = deepcopy(json) if json is not None else json_module.loads(data)
         request_headers = headers or {}
         path = urlparse(url).path
+        if path == "/api/pipeline-fn":
+            self.legacy_pipeline_requests.append(deepcopy(request_body))
+            function_response = self._pipeline_function_app.pipeline_fn(
+                LocalFunctionRequest(request_body, headers=request_headers)
+            )
+            return LocalFunctionResponse(function_response)
         if "/api/interact/" in path:
             offer_id = unquote(path.rsplit("/", 1)[-1])
             self.frontend_requests.append({"body": request_body, "headers": request_headers})

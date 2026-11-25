@@ -11,7 +11,7 @@ UTTERANCE_FINALIZED = "input.utterance.finalized"
 
 
 class IncrementalTDMClient:
-    """Send scripted hypothesis revisions and finalize one spoken utterance."""
+    """Send hypothesis revisions and finalization in an explicitly opted-in TDM session."""
     def __init__(self, tdm_client: TDMClient):
         self._tdm_client = tdm_client
         self._session = tdm_client.session

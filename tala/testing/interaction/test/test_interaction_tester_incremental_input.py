@@ -3,6 +3,7 @@ import time
 
 from tala.testing.interaction import interaction_tester as interaction_tester_module
 from tala.testing.interaction.interaction_tester import InteractionTester
+from tala.testing.interaction.interaction_tester import InteractionTesterException
 
 
 class TestInteractionTesterIncrementalInput:
@@ -27,6 +28,7 @@ class TestInteractionTesterIncrementalInput:
             "name": "incremental speech smoke test",
             "target_ddd": "travel",
             "url": "https://handler.example/interact/offer-1",
+            "incremental_input": True,
         })
         self.client = FakeInteractionTDMClient()
         self.tester._client = self.client
@@ -64,6 +66,7 @@ class TestInteractionTesterIncrementalInput:
             "name": "incremental one-turn smoke test",
             "target_ddd": "travel",
             "url": "https://handler.example/interact/offer-1",
+            "incremental_input": True,
             "interaction": [
                 {
                     "speaker": "system",
@@ -114,6 +117,7 @@ class TestInteractionTesterIncrementalInput:
         assert "A streamed answer." in self.response["transcript"]
         assert all(event["elapsed_seconds"] >= 0 for event in self.response["incremental_event_history"])
         assert self.client.start_request_id
+        assert self.client.start_incremental_input is True
         assert self.response["session_id"] == "handler-created-session"
         assert self.listeners[0].session_id == "handler-created-session"
         assert self.listeners[0].endpoint == "https://handler-issued-sse.example/events"
@@ -150,6 +154,48 @@ class TestInteractionTesterIncrementalInput:
         assert [event["sequence"] for event in self.tester._incremental_event_history] == [1, 2]
         assert self.response["incremental_event_history"] == self.tester._incremental_event_history
 
+    def test_incremental_speech_without_session_opt_in_is_rejected_before_sending_events(self):
+        self.given_an_interaction_tester_and_a_scripted_speech_turn()
+        self.given_the_test_case_has_not_opted_in()
+
+        self.when_the_unopted_incremental_turn_is_attempted()
+
+        self.then_no_incremental_requests_are_sent()
+
+    def given_the_test_case_has_not_opted_in(self):
+        self.tester._incremental_input = False
+
+    def when_the_unopted_incremental_turn_is_attempted(self):
+        self.input_error = None
+        try:
+            self.tester._do_user_turn(self.user_entry)
+        except InteractionTesterException as error:
+            self.input_error = error
+
+    def then_no_incremental_requests_are_sent(self):
+        assert self.input_error is not None
+        assert self.input_error.args == ("Incremental speech requires incremental_input=true for this test case.", )
+        assert self.client.calls == []
+
+    def test_ordinary_script_does_not_opt_in_or_change_the_start_call(self, monkeypatch):
+        self.given_a_fake_tdm_endpoint_and_stream_listener(monkeypatch)
+        self.given_an_ordinary_speech_script()
+
+        self.when_the_scripted_dialogue_runs()
+
+        self.then_the_ordinary_start_has_no_incremental_arguments_or_events()
+
+    def given_an_ordinary_speech_script(self):
+        self.testcase.pop("incremental_input")
+        self.testcase["interaction"][1] = {"speaker": "user", "speech_content": "Hello"}
+
+    def then_the_ordinary_start_has_no_incremental_arguments_or_events(self):
+        assert self.response["success"] is True
+        assert self.client.start_request_id is None
+        assert self.client.start_incremental_input is False
+        assert self.client.calls == ["start_session", "natural_language_input"]
+        assert "incremental_event_history" not in self.response
+
 
 class FakeInteractionTDMClient:
     def __init__(self):
@@ -178,10 +224,11 @@ class FakeInteractionTDMClient:
             },
         }
 
-    def start_session(self, session_data, *, request_id=None):
+    def start_session(self, session_data, *, request_id=None, incremental_input=False):
         self.calls.append("start_session")
         self.session = deepcopy(session_data)
         self.start_request_id = request_id
+        self.start_incremental_input = incremental_input
         self.session["session_id"] = "handler-created-session"
         self.session["sse_endpoint"] = "https://handler-issued-sse.example/events/"
         return {

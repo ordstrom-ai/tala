@@ -8,6 +8,9 @@ record before 12.0.0, see CHANGELOG.legacy.md.
   utterance finalization, and acknowledgement timing before the normal TDM turn.
   The entry is a sequence of hypothesis lists; all but the final list are sent
   as updates, then the last is finalized before the ordinary speech-input turn.
+  These scripts must explicitly set the test-case option `incremental_input: true`.
+  `TDMClient.start_session(..., incremental_input=True)` sends the matching
+  startup opt-in; ordinary session starts retain their original wire payload.
 - DDD: add perform-goal replacement and completion-only follow-up hooks. TDM
   runtime support is required before DDDs can use these constructs.
 

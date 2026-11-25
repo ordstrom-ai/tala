@@ -132,7 +132,12 @@ class InteractionTester:
             self._session_data.update(offer)
         self._session_data["neural"] = self._neural
         with self._progress.request("start_session"):
-            self._latest_response = self._client.start_session(self._session_data, request_id=str(uuid.uuid4()))
+            if self._incremental_input:
+                self._latest_response = self._client.start_session(
+                    self._session_data, request_id=str(uuid.uuid4()), incremental_input=True
+                )
+            else:
+                self._latest_response = self._client.start_session(self._session_data)
             self._update_session_data()
         logger.info("starting session", session_id=self._session_id)
 
@@ -216,6 +221,7 @@ class InteractionTester:
         self._output_buffer = OutputBuffer()
         self._ddd_name = testcase["target_ddd"]
         self._neural = testcase.get("neural")
+        self._incremental_input = testcase.get("incremental_input", False) is True
         self._start_date = {time.asctime()}
         url = self._patch_url_with_port(testcase["url"])
         self._client = TDMClient(url)
@@ -428,6 +434,8 @@ class InteractionTester:
         return revisions
 
     def _request_incremental_speech_input(self, revisions):
+        if not self._incremental_input:
+            raise InteractionTesterException("Incremental speech requires incremental_input=true for this test case.")
         incremental_client = IncrementalTDMClient(self._client)
         try:
             for interim_hypotheses in revisions[:-1]:

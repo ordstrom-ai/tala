@@ -32,3 +32,41 @@ class TestTDMClientStartIdentity:
         assert request_body["session"] == self.original_session_data
         assert self.session_data == self.original_session_data
         assert self.response["session"]["session_id"] == "handler-session"
+
+    def test_incremental_session_start_carries_an_explicit_opt_in(self, monkeypatch):
+        self.given_a_tdm_endpoint_and_start_session_data(monkeypatch)
+
+        self.when_an_incremental_session_is_started()
+
+        self.then_only_the_incremental_start_has_an_opt_in_parameter()
+
+    def when_an_incremental_session_is_started(self):
+        self.response = self.client.start_session(
+            self.session_data, request_id="start-request-1", incremental_input=True
+        )
+
+    def then_only_the_incremental_start_has_an_opt_in_parameter(self):
+        request_body = json.loads(self.post.call_args.kwargs["data"])
+        assert request_body["request"] == {"start_session": {"incremental_input": True}}
+        assert request_body["request_id"] == "start-request-1"
+        assert self.session_data == self.original_session_data
+
+    def test_ordinary_session_start_preserves_the_original_wire_payload(self, monkeypatch):
+        self.given_a_tdm_endpoint_and_start_session_data(monkeypatch)
+
+        self.when_an_ordinary_session_is_started()
+
+        self.then_no_incremental_start_metadata_is_added()
+
+    def when_an_ordinary_session_is_started(self):
+        self.response = self.client.start_session(self.session_data)
+
+    def then_no_incremental_start_metadata_is_added(self):
+        request_body = json.loads(self.post.call_args.kwargs["data"])
+        assert request_body == {
+            "version": tdm_client.PROTOCOL_VERSION,
+            "session": self.original_session_data,
+            "request": {
+                "start_session": {}
+            },
+        }
